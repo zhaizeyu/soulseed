@@ -1,0 +1,31 @@
+# 数字生命 MVP 依赖 (参见 arch.md)
+# 要求: Python 3.11（以下版本均在 3.11 下测试可用）
+
+# 配置与环境
+python-dotenv>=1.0.0
+PyYAML>=6.0.1
+
+# 异步与 HTTP
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+
+# 视觉 (截屏)
+mss>=9.0.1
+Pillow>=10.0.0
+
+# 语音 (STT / VAD / TTS，按需安装)
+# openai-whisper 或 其他 STT
+# webrtcvad 或 silero-vad
+# edge-tts 或 fish-speech 等
+
+# 大脑 (Gemini)
+google-generativeai>=0.8.0
+
+# 记忆 (Mem0)
+# mem0ai 或 自建向量库 (qdrant-client, chromadb)
+
+# VTube Studio
+# pyvts
+
+# 日志与工具
+colorlog>=6.8.0

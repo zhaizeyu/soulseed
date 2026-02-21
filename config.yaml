@@ -1,0 +1,14 @@
+# 数字生命 MVP 全局配置 (参见 arch.md)
+
+# 视觉刷新
+vision_interval: 2.0  # 秒
+
+# TTS 音色 (依所用引擎填写，如 Edge-TTS 的 voice 名)
+tts_voice: "zh-CN-XiaoxiaoNeural"
+
+# VAD 灵敏度 (0~1，越高越容易触发录音)
+vad_sensitivity: 0.5
+
+# VTube Studio
+vts_host: "127.0.0.1"
+vts_port: 8001

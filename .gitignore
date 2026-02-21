@@ -1,0 +1,24 @@
+# 机密与本地配置
+.env
+*.local.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 临时资源（TTS 生成等）
+assets/temp/*
+!assets/temp/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
