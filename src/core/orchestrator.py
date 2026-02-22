@@ -9,6 +9,7 @@ from typing import Any
 from src.core.config_loader import get_config
 from src.core.logger import get_logger
 from src.brain import conscious
+from src.brain.chat_history_store import load_history, append_turns
 
 logger = get_logger(__name__)
 
@@ -19,8 +20,8 @@ class Orchestrator:
     def __init__(self) -> None:
         self._running = False
         self._config = get_config()
-        # 历史对话（仅 user/assistant 轮次），供 prompt 组装与主脑使用
-        self._chat_history: list[dict[str, str]] = []
+        # 历史对话（仅 user/assistant），从 JSON 加载最近 N 条，每轮追加后写回
+        self._chat_history: list[dict[str, str]] = load_history()
         # Mem0 检索结果（占位，后续接 memory.search）
         self._mem0_lines: list[str] = []
 
@@ -56,10 +57,20 @@ class Orchestrator:
             logger.exception("主脑本轮异常: %s", e)
             full_reply.append(f"[错误: {e}]")
         reply_text = "".join(full_reply).strip()
+        new_turns: list[dict[str, str]] = []
         if (user_input or "").strip():
             self._chat_history.append({"role": "user", "content": user_input.strip()})
+            new_turns.append({"role": "user", "content": user_input.strip()})
         self._chat_history.append({"role": "assistant", "content": reply_text})
-        # 可选：异步写入 Mem0（不阻塞），后续接 memory.add_background
+        new_turns.append({"role": "assistant", "content": reply_text})
+        append_turns(new_turns)
+        # 保持内存中仅最近 N 条（与 config chat_history_max_entries 一致）
+        try:
+            max_entries = max(1, int(self._config.get("chat_history_max_entries", 20)))
+        except (TypeError, ValueError):
+            max_entries = 20
+        if len(self._chat_history) > max_entries:
+            self._chat_history = self._chat_history[-max_entries:]
 
     async def run(self) -> None:
         """主循环：模拟输入 → 主脑流式 → 打印，直到用户输入 exit/quit。"""

@@ -17,6 +17,9 @@ build/
 assets/temp/*
 !assets/temp/.gitkeep
 
+# 历史对话（可选：若不想提交对话记录可保留此项）
+data/
+
 # 日志
 logs/
 *.log

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 数字生命 MVP — 程序启动总入口
-参见 arch.md 架构设计。
+参见 docs/arch.md 架构设计。
 """
 import asyncio
 

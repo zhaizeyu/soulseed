@@ -1,8 +1,12 @@
-# 数字生命 MVP 全局配置 (参见 arch.md)
+# 数字生命 MVP 全局配置 (参见 docs/arch.md)
 
 # 日志（目录相对项目根，可为绝对路径）
 log_dir: "logs"
 log_file: "vedalai.log"
+
+# 历史对话（JSON 持久化，每次加载最新 N 条）
+chat_history_file: "data/chat_history.json"
+chat_history_max_entries: 20
 
 # 主脑 (Gemini)
 gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp

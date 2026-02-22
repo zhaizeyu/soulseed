@@ -9,6 +9,11 @@ VedalAI_Project/
 ├── main.py                 # [入口] 程序启动总入口
 ├── requirements.txt        # Python 依赖库列表
 ├── README.md               # 项目开发与运行文档
+├── docs/                   # [文档] 架构与提示词说明
+│   ├── arch.md             # 本架构设计文档
+│   ├── prompt.md           # 提示词组装顺序说明
+│   ├── prompt.json         # 组装示例/参考
+│   └── assembled_prompt.json # 命令行组装输出 (python -m src.brain.prompt_assembler)
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
@@ -41,6 +46,7 @@ VedalAI_Project/
     │   ├── __init__.py
     │   ├── conscious.py    # [主脑] 封装 Gemini API，处理多模态上下文、对话会话管理
     │   ├── prompt_assembler.py # [提示词组装] 按 prompt.md 顺序拼接 Jailbreak/角色卡/Mem0/历史/感知/用户/Task
+    │   ├── chat_history_store.py # [历史对话] JSON 持久化，每次加载最近 N 条
     │   ├── tools_registry.py # [工具箱] 纯 Python 业务函数库 (代码执行/搜索等)，供 Gemini 自动调用
     │   └── memory.py       # [海马体] 封装 Mem0，负责长期记忆的异步写入与检索
     │

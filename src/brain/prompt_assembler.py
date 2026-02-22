@@ -183,13 +183,14 @@ def build_messages(
 
 
 if __name__ == "__main__":
-    """命令行：组装并打印或写入 JSON，便于与 prompt.json 对比。"""
+    """命令行：组装并打印或写入 JSON，便于与 docs/prompt.json 对比。"""
     import sys
     msgs = build_messages(
         current_user_input="今天天气真好",
         use_defaults_for_missing=True,
     )
-    out_path = Path(__file__).resolve().parents[2] / "assembled_prompt.json"
+    out_path = Path(__file__).resolve().parents[2] / "docs" / "assembled_prompt.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(msgs, f, ensure_ascii=False, indent=2)
     print("Wrote", len(msgs), "messages to", out_path)
