@@ -1,5 +1,12 @@
 # 数字生命 MVP 全局配置 (参见 arch.md)
 
+# 日志（目录相对项目根，可为绝对路径）
+log_dir: "logs"
+log_file: "vedalai.log"
+
+# 主脑 (Gemini)
+gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp
+
 # 视觉刷新
 vision_interval: 2.0  # 秒
 

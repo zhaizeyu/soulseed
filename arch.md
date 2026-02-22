@@ -13,6 +13,11 @@ VedalAI_Project/
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
 │   │   └── vedal_main.json # 主脑 System Instruction (核心人设、行为准则)
+│   ├── prompts/           # 提示词组装模板与默认数据
+│   │   ├── jailbreak.json  # 越狱/核心规则 (绝对头部)
+│   │   ├── task.json       # 输出风格限制 (绝对底部)
+│   │   ├── user_info.json  # 用户身份描述
+│   │   └── prompt_defaults.json # Mem0/历史/眼睛耳朵初始数据
 │   ├── world_books/        # 世界书 (Lore/规则) JSON，关键词触发，供组装提示词
 │   │   └── *.json         # 如 sex_acts_world_info.json
 │   ├── sounds/             # 预置音效 (如"思考中"提示音)
@@ -35,6 +40,7 @@ VedalAI_Project/
     ├── brain/              # === 大脑层 (认知与决策) ===
     │   ├── __init__.py
     │   ├── conscious.py    # [主脑] 封装 Gemini API，处理多模态上下文、对话会话管理
+    │   ├── prompt_assembler.py # [提示词组装] 按 prompt.md 顺序拼接 Jailbreak/角色卡/Mem0/历史/感知/用户/Task
     │   ├── tools_registry.py # [工具箱] 纯 Python 业务函数库 (代码执行/搜索等)，供 Gemini 自动调用
     │   └── memory.py       # [海马体] 封装 Mem0，负责长期记忆的异步写入与检索
     │

@@ -17,6 +17,10 @@ build/
 assets/temp/*
 !assets/temp/.gitkeep
 
+# 日志
+logs/
+*.log
+
 # IDE
 .idea/
 .vscode/
