@@ -11,6 +11,15 @@ chat_history_max_entries: 20
 # 主脑 (Gemini)
 gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp
 
+# 长期记忆 (Mem0，全用 Gemini)
+mem0_embedder_model: "gemini-embedding-001"   # 嵌入模型
+mem0_llm_model: "gemini-3-flash-preview"      # 记忆提取用 LLM
+mem0_search_limit: 5                          # 每轮检索条数
+mem0_embedding_dims: 768                      # 嵌入维度 (768/1536/3072)
+mem0_llm_temperature: 0.2                     # 记忆提取温度
+mem0_infer: true                               # true=只存 LLM 抽取的事实，false=存助手回复原文
+# mem0_vector_store_path: "data/mem0/qdrant"  # 可选，默认 data/mem0/qdrant
+
 # 视觉刷新
 vision_interval: 2.0  # 秒
 

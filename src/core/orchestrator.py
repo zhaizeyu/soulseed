@@ -10,6 +10,7 @@ from src.core.config_loader import get_config
 from src.core.logger import get_logger
 from src.brain import conscious
 from src.brain.chat_history_store import load_history, append_turns
+from src.brain import memory as memory_module
 
 logger = get_logger(__name__)
 
@@ -38,6 +39,13 @@ class Orchestrator:
         """执行一轮：主脑流式生成，打印并写入历史。"""
         if not user_input:
             return
+        # 每轮开始前：从 Mem0 检索相关长期记忆
+        try:
+            limit = max(1, int(self._config.get("mem0_search_limit", 5)))
+            self._mem0_lines = await memory_module.search(user_input.strip(), top_k=limit)
+        except Exception as e:
+            logger.debug("Mem0 检索跳过: %s", e)
+            self._mem0_lines = []
         vision_audio = await self._get_vision_audio_text()
         full_reply: list[str] = []
         try:
@@ -71,6 +79,9 @@ class Orchestrator:
             max_entries = 20
         if len(self._chat_history) > max_entries:
             self._chat_history = self._chat_history[-max_entries:]
+        # 每轮结束后：写入长期记忆并等待完成，避免 Ctrl+C 退出时未落盘
+        if reply_text:
+            await memory_module.add_background(user_input.strip() if user_input else None, reply_text)
 
     async def run(self) -> None:
         """主循环：模拟输入 → 主脑流式 → 打印，直到用户输入 exit/quit。"""
