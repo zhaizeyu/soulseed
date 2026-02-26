@@ -5,6 +5,14 @@
 import logging
 from pathlib import Path
 
+
+class _Mem0JsonFilter(logging.Filter):
+    """过滤 Mem0 事实抽取时 LLM 返回非法 JSON 的 error，不刷控制台；仍写入日志文件。"""
+    def filter(self, record: logging.LogRecord) -> bool:
+        if "mem0" in (record.name or "").lower() and "Invalid JSON response" in (record.getMessage() or ""):
+            return False
+        return True
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _LOG_FILE: Path | None = None  # 首次 _ensure_file_handler 时从 config 解析
 
@@ -22,9 +30,17 @@ try:
     )
     _console_handler = colorlog.StreamHandler()
     _console_handler.setFormatter(_console_formatter)
+    _console_handler.addFilter(_Mem0JsonFilter())
 except ImportError:
     _console_handler = logging.StreamHandler()
     _console_handler.setFormatter(logging.Formatter("%(levelname)s [%(name)s] %(message)s"))
+    _console_handler.addFilter(_Mem0JsonFilter())
+
+# 抑制 Mem0 事实抽取时 LLM 返回非法 JSON 的 error 刷屏（仍会写入 mem0 自己的日志若存在）
+try:
+    logging.getLogger("mem0.memory.main").addFilter(_Mem0JsonFilter())
+except Exception:
+    pass
 
 _file_handler: logging.FileHandler | None = None
 

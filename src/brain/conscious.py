@@ -64,6 +64,7 @@ async def chat_stream(
     mem0_lines: list[str] | None = None,
     chat_history: list[dict[str, str]] | None = None,
     vision_audio_text: str | None = None,
+    vision_image: Any | None = None,
     use_defaults_for_missing: bool = False,
 ) -> AsyncIterator[str]:
     """
@@ -83,6 +84,7 @@ async def chat_stream(
         mem0_lines=mem0_lines,
         chat_history=chat_history,
         vision_audio_text=vision_audio_text,
+        vision_image_attached=(vision_image is not None),
         current_user_input=current_user_input,
         use_defaults_for_missing=use_defaults_for_missing,
     )
@@ -110,11 +112,11 @@ async def chat_stream(
         # 不设 system_instruction，全部按顺序放在 history 中
         model = genai.GenerativeModel(model_name=model_name)
         chat = model.start_chat(history=history_contents)
-        # 用户输入为空时用「请继续」触发生成，实现助手继续说话效果
-        response = chat.send_message(
-            current_user_content if current_user_content else "(请根据上文以角色身份继续说话。)",
-            stream=True,
-        )
+        # 本回合发送内容：仅组装好的用户文字 + 可选截图（§7 保证必有 user，不会为空）
+        user_message: Any = current_user_content
+        if vision_image is not None:
+            user_message = [user_message, vision_image]
+        response = chat.send_message(user_message, stream=True)
         for chunk in response:
             if chunk.text:
                 yield chunk.text

@@ -11,6 +11,7 @@ from src.core.logger import get_logger
 from src.brain import conscious
 from src.brain.chat_history_store import load_history, append_turns
 from src.brain import memory as memory_module
+from src.senses import vision as vision_module
 
 logger = get_logger(__name__)
 
@@ -32,13 +33,16 @@ class Orchestrator:
         return await loop.run_in_executor(None, lambda: input("你: ").strip())
 
     async def _get_vision_audio_text(self) -> str:
-        """当前环境感知（眼睛与耳朵）。第一步用占位或空，后续接 vision + hearing。"""
+        """当前环境感知（耳朵）。眼睛已通过 vision_image 单独传入主脑。"""
         return ""
 
+    async def _get_vision_image(self):
+        """本回合屏幕截图，供主脑多模态；未启用或失败时返回 None。"""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, vision_module.get_screen_for_turn)
+
     async def _run_one_turn(self, user_input: str) -> None:
-        """执行一轮：主脑流式生成，打印并写入历史。"""
-        if not user_input:
-            return
+        """执行一轮：主脑流式生成，打印并写入历史。用户直接回车（空输入）时按「继续说话」处理。"""
         # 每轮开始前：从 Mem0 检索相关长期记忆
         try:
             limit = max(1, int(self._config.get("mem0_search_limit", 5)))
@@ -47,6 +51,7 @@ class Orchestrator:
             logger.debug("Mem0 检索跳过: %s", e)
             self._mem0_lines = []
         vision_audio = await self._get_vision_audio_text()
+        vision_image = await self._get_vision_image()
         full_reply: list[str] = []
         try:
             async for chunk in conscious.chat_stream(
@@ -56,6 +61,7 @@ class Orchestrator:
                 mem0_lines=self._mem0_lines or None,
                 chat_history=self._chat_history,
                 vision_audio_text=vision_audio or None,
+                vision_image=vision_image,
                 use_defaults_for_missing=(len(self._chat_history) == 0),
             ):
                 full_reply.append(chunk)

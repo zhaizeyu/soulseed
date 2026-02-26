@@ -84,9 +84,9 @@ def _get_memory():
 
 
 async def search(query: str, top_k: int = 5) -> List[str]:
-    """根据 query 检索相关长期记忆片段。未启用 Mem0 时返回空列表。"""
+    """根据 query 检索相关长期记忆片段。未启用 Mem0 或 query 为空时返回空列表。"""
     memory = _get_memory()
-    if memory is None:
+    if memory is None or not (query or "").strip():
         return []
     limit = max(1, min(top_k, 100))
     loop = asyncio.get_event_loop()
@@ -123,14 +123,21 @@ async def add_background(user_input: str | None, reply_text: str) -> None:
 
     def _add() -> None:
         if infer and (user_input or "").strip():
-            # 只抽取事实：传入整轮对话，由 LLM 抽取事实再写入
+            # 先尝试只抽取事实；若 LLM 返回非法 JSON（Mem0 会打 Invalid JSON response），降级为存原文
             messages = [
                 {"role": "user", "content": (user_input or "").strip()},
                 {"role": "assistant", "content": reply_text.strip()},
             ]
-            memory.add(messages, user_id=_DEFAULT_USER_ID, infer=True)
+            try:
+                memory.add(messages, user_id=_DEFAULT_USER_ID, infer=True)
+            except Exception as e:
+                logger.debug("事实抽取失败，改为存原文: %s", e)
+                memory.add(
+                    [{"role": "assistant", "content": reply_text.strip()}],
+                    user_id=_DEFAULT_USER_ID,
+                    infer=False,
+                )
         else:
-            # 存原文：仅存助手回复，不经过事实抽取
             memory.add(
                 [{"role": "assistant", "content": reply_text.strip()}],
                 user_id=_DEFAULT_USER_ID,

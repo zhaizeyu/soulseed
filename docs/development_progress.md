@@ -13,22 +13,22 @@
 ### 2. 大脑层（主脑 + 提示词 + 历史）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| prompt_assembler | ✅ | 按 prompt.md §1–§8 顺序组装，不合并、用户可空 |
-| conscious | ✅ | Gemini 流式、消息逐条转 Content、无 API Key 时友好提示 |
+| prompt_assembler | ✅ | §1–§8 全在此组装，主脑不注入；§6 截图/耳朵，§7 无输入时「继续说话」占位；vision_audio_text 占位 |
+| conscious | ✅ | 仅把组装好的 current_user_content + 可选 vision_image 送 Gemini 流式，不注入任何提示词 |
 | chat_history_store | ✅ | JSON 持久化、每次加载最近 N 条、配置化路径与条数 |
-| memory | ✅ | Mem0 长期记忆：Gemini embedder + LLM，本地 Qdrant；search / add_background 已接；mem0_infer 可配置「只抽事实」或「存原文」 |
+| memory | ✅ | Mem0：Gemini embedder+LLM，Qdrant；search 在 query 空时直接返回 []（避免 400）；add_background 已接；mem0_infer 可配置；Invalid JSON 日志已过滤 |
 | tools_registry | ⏳ 占位 | 未实现业务工具，未接入 conscious |
 
 ### 3. 调度与主循环（第一步闭环 + 记忆）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| orchestrator | ✅ 部分 | 模拟输入 → 每轮前 memory.search → 主脑流式 → 控制台；历史加载/写入；每轮后 **await** memory.add_background；**未接** 真实 hearing/vision/mouth/player/body |
+| orchestrator | ✅ 部分 | 模拟输入（**直接回车也执行一轮，继续说话**）→ memory.search（空 query 不调 Mem0）→ 截屏 → 主脑流式 → 控制台；每轮后 await add_background；未接 hearing/mouth/player/body |
 | main.py | ✅ | 入口，asyncio 跑 orchestrator.run() |
 
 ### 4. 感官层
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| vision | ✅ 简易 | capture_screen() 用 mss 截屏，**未**接入 orchestrator，无 Diff/摘要 |
+| vision | ✅ | capture_screen() + get_screen_for_turn()（config：vision_enabled、vision_max_longer_side）；**已接入** orchestrator，每轮截屏以 vision_image 传入主脑多模态 |
 | hearing | ⏳ 占位 | 无 VAD、录音、Whisper |
 
 ### 5. 表达层
@@ -63,9 +63,11 @@
 - **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；可选将 RMS 推给 body。
 - **orchestrator**：主脑流式输出不再直接 `print`，改为接入 `mouth.consume_text_stream(stream)`（或等价接口）。
 
-### 阶段 5：眼睛接入与视听摘要
-- **vision**：在现有 capture_screen 上增加可选 Diff、或对图像做轻量摘要（如调用一次视觉模型得到「当前画面描述」）。
-- **orchestrator**：每轮或定时取 `vision.capture_screen()`，得到图像或摘要文本，作为 `vision_audio_text`（或多模态）传入 prompt_assembler / conscious。
+### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图）
+- **vision**：`get_screen_for_turn()` 按 config 截屏、缩放、可选存 `data/vision/`。
+- **orchestrator**：每轮取截图传入主脑；**直接回车**也执行一轮（继续说话）。
+- **prompt_assembler**：§6 在 `vision_image_attached` 时插入「本回合附屏幕截图…」说明；**所有提示词仅在此组装**，conscious 不注入。
+- **conscious**：仅发送组装好的 current_user_content + 可选 vision_image。
 
 ### 阶段 6：身体（VTube Studio）
 - **body.py**：pyvts 连接 VTS，接收 player 的 RMS/音量，映射 MouthOpen；主脑输出情感标签触发表情热键。
@@ -92,4 +94,4 @@
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
-当前可运行链路：**模拟输入 → Mem0 检索 → 提示词组装（含长期记忆）→ Gemini 流式 → 控制台输出 + 历史持久化 + 长期记忆写入**；其余感官与表达均为占位或未接入。
+当前可运行链路：**模拟输入（直接回车=继续说话）→ Mem0 检索（空 query 不调）→ 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入**；耳朵/嘴/播放器/身体未接入。

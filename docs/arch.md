@@ -18,9 +18,10 @@ VedalAI_Project/
 │
 ├── data/                   # [运行时数据]
 │   ├── chat_history.json   # 历史对话持久化 (条数见 config chat_history_max_entries)
+│   ├── vision/             # 每轮截图 (screenshot_*.jpg/png)，见 config vision_save_*
 │   └── mem0/               # 长期记忆 (Mem0)：需配置 GEMINI_API_KEY 后使用
 │       ├── config.json     # Mem0 库内部配置
-│       ├── history.db     # 记忆元数据 (SQLite)
+│       ├── history.db      # 记忆元数据 (SQLite)
 │       ├── qdrant/         # 向量库目录 (嵌入向量与检索索引)
 │       └── migrations_qdrant/  # Qdrant 内部迁移目录，勿手动修改
 │
@@ -57,7 +58,7 @@ VedalAI_Project/
     ├── brain/              # === 大脑层 (认知与决策) ===
     │   ├── __init__.py
     │   ├── conscious.py    # [主脑] 封装 Gemini API，处理多模态上下文、对话会话管理
-    │   ├── prompt_assembler.py # [提示词组装] 按 prompt.md 顺序拼接 Jailbreak/角色卡/Mem0/历史/感知/用户/Task
+    │   ├── prompt_assembler.py # [提示词组装] §1–§8 全在此组装，主脑不注入；§6 截图说明/耳朵，§7 无输入时「继续说话」
     │   ├── chat_history_store.py # [历史对话] JSON 持久化，每次加载最近 N 条
     │   ├── tools_registry.py # [工具箱] 纯 Python 业务函数库 (代码执行/搜索等)，供 Gemini 自动调用
     │   └── memory.py       # [海马体] 封装 Mem0，负责长期记忆的异步写入与检索
@@ -85,8 +86,8 @@ VedalAI_Project/
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
 * **当前执行逻辑（第一步闭环 + 长期记忆）**：
 1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
-2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`，再调用 `conscious.chat_stream(..., mem0_lines=_mem0_lines, chat_history=...)` 做主脑流式生成并打印。
-3. 每轮结束：追加本轮 user/assistant 到历史并持久化；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮（避免 Ctrl+C 退出时未落盘）。
+2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0**）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。
+3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮。
 4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`。
 
 
@@ -98,7 +99,9 @@ VedalAI_Project/
   * **主脑**：`gemini_model`。
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
-  * **日志**：`log_dir`、`log_file`。**感官/表达**：`vision_interval`、`tts_voice`、`vad_sensitivity`、`vts_host`、`vts_port`。
+  * **日志**：`log_dir`、`log_file`。
+  * **眼睛**：`vision_enabled`、`vision_max_longer_side`（先缩放再送主脑）；`vision_save_enabled`、`vision_save_dir`（截图存 data）、`vision_save_format`（jpg/png）、`vision_jpeg_quality`。
+  * **感官/表达**：`vision_interval`、`tts_voice`、`vad_sensitivity`、`vts_host`、`vts_port`。
 
 
 * **`logger.py`**
@@ -114,25 +117,20 @@ VedalAI_Project/
 
 
 * **`vision.py` (眼睛)**
-* **核心职责**：获取数字生命的视觉输入。
-* **实现细节**：基于 `mss` 或 `Pillow.ImageGrab` 抓取主屏幕或特定窗口内容。包含简单的图像差异对比算法（Diff），若画面变化极小则跳过抓取。**直接返回 `PIL.Image` 对象**或字节流，不涉及任何大模型调用。
+* **核心职责**：获取数字生命的视觉输入，供主脑多模态使用。
+* **实现细节**：基于 `mss` 抓取主屏，返回 `PIL.Image`。`get_screen_for_turn()` 先按 `vision_max_longer_side` 缩放（压缩尺寸、省 token），再按 `vision_save_enabled` / `vision_save_dir` 将截图写入 `data/vision/`（文件名 `screenshot_YYYYMMDD_HHMMSS.jpg` 或 `.png`），最后返回图像供主脑多模态。配置项：`vision_save_format`（jpg/png）、`vision_jpeg_quality`（存为 jpg 时质量）。调度器每轮在 executor 中调用取图并传入 `conscious.chat_stream(..., vision_image=...)`。
 
 
 
 ### C. 大脑层 (`src/brain/`)
 
+* **`prompt_assembler.py` (提示词组装)**
+* **核心职责**：**所有面向模型的提示词仅在此组装**（主脑不再注入）。按 prompt.md §1–§8 顺序：Jailbreak → 角色卡 → 示例 → Mem0 → 历史 → §6 环境感知 → §7 用户当前回合 → Task。
+* **实现细节**：§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入（截图说明或耳朵摘要）；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
+
 * **`conscious.py` (主脑 - Gemini 核心)**
-* **核心职责**：处理认知逻辑、记忆融合与决策下发。
-* **实现细节**：
-1. 实例化 `gemini-3-flash-preview` 模型。
-2. 读取 `vedal_main.json` 加载 `system_instruction`。
-3. 将 `tools_registry.py` 中的函数列表传入 `tools` 参数，并开启 `enable_automatic_function_calling=True`。
-4. 开启自带思考模型特性 (`thinking_config`)。
-5. **处理入口**：接收 `(user_text, image_obj)`。先调用 `memory.py` 获取相关长期记忆，将其与用户文本、截图对象共同传入 `ChatSession.send_message_async(stream=True)`。
-6. 返回异步文本流生成器。
-
-
-
+* **核心职责**：按 prompt_assembler 组装好的消息调用 Gemini 流式生成，**不在此注入任何提示词**。
+* **实现细节**：调用 `build_messages(...)`（含 `vision_image_attached`）得到消息列表，转为 Gemini Content 后，本回合发送内容为「组装好的 current_user_content + 可选 vision_image」；无 system_instruction，全部按顺序进 history。模型名等来自 `config.yaml`。
 
 * **`tools_registry.py` (原生工具箱)**
 * **核心职责**：提供供 Gemini 自动调用的扩展能力。
@@ -142,10 +140,10 @@ VedalAI_Project/
 * **`memory.py` (海马体 - Mem0)**
 * **核心职责**：维护长期记忆与人格一致性。
 * **实现细节**：
-  * 封装 Mem0，**全部使用 Gemini**（不依赖 OpenAI）：嵌入模型 `mem0_embedder_model`（如 `gemini-embedding-001`）、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（路径见 `mem0_vector_store_path`，默认 `data/mem0/qdrant`）。数据目录通过 `MEM0_DIR` 设为 `data/mem0`（含 `history.db` 与 `qdrant/`）。
-  * **`search(query, top_k)`**：按语义检索相关记忆，供每轮对话前传入主脑。
-  * **`add_background(user_input, reply_text)`**：每轮结束后写入记忆。由 `config.yaml` 的 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant，由 LLM 抽取事实再写入（推荐）；`false` 时直接存助手回复原文。
-  * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级（search 返回空列表，add_background 静默跳过）。
+  * 封装 Mem0，**全部使用 Gemini**（不依赖 OpenAI）：嵌入模型 `mem0_embedder_model`、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（默认 `data/mem0/qdrant`）。数据目录 `MEM0_DIR=data/mem0`。
+  * **`search(query, top_k)`**：按语义检索相关记忆；**query 为空时直接返回 []**，不调用 Mem0（避免 Gemini 报 400）。
+  * **`add_background(user_input, reply_text)`**：每轮结束后写入记忆。由 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant 抽事实；`false` 或 user 为空时存助手回复原文。事实抽取若遇非法 JSON 会降级存原文；Mem0 的 Invalid JSON 日志已过滤不刷控制台。
+  * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级。
 
 
 

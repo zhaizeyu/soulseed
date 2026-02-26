@@ -20,8 +20,14 @@ mem0_llm_temperature: 0.2                     # 记忆提取温度
 mem0_infer: true                               # true=只存 LLM 抽取的事实，false=存助手回复原文
 # mem0_vector_store_path: "data/mem0/qdrant"  # 可选，默认 data/mem0/qdrant
 
-# 视觉刷新
-vision_interval: 2.0  # 秒
+# 眼睛（屏幕截取与多模态）
+vision_enabled: true              # 是否每轮截屏并传入主脑
+vision_interval: 2.0              # 秒（后续定时刷新用）
+vision_max_longer_side: 1024      # 截图较长边上限（先缩放再送主脑，省 token）
+vision_save_enabled: true         # 是否将每轮截图存到 data 目录
+vision_save_dir: "data/vision"    # 截图保存目录（相对项目根）
+vision_save_format: "jpg"         # 存盘格式：jpg 更小，png 无损
+vision_jpeg_quality: 85           # 存为 jpg 时的质量 (1-100)，兼顾体积与清晰度
 
 # TTS 音色 (依所用引擎填写，如 Edge-TTS 的 voice 名)
 tts_voice: "zh-CN-XiaoxiaoNeural"

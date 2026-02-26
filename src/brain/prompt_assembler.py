@@ -84,6 +84,7 @@ def build_messages(
     mem0_lines: list[str] | None = None,
     chat_history: list[dict[str, str]] | None = None,
     vision_audio_text: str | None = None,
+    vision_image_attached: bool = False,
     current_user_input: str = "",
     use_defaults_for_missing: bool = True,
 ) -> list[dict[str, Any]]:
@@ -96,9 +97,10 @@ def build_messages(
     - user_info: 用户身份描述，缺省则从 user_info.json 读取
     - mem0_lines: Mem0 检索到的记忆片段列表，缺省则用 prompt_defaults 或空
     - chat_history: 历史对话 [{role, content}, ...]
-    - vision_audio_text: 当前眼睛与耳朵的摘要文本
+    - vision_audio_text: 当前耳朵/环境摘要文本，有则插入 §6
+    - vision_image_attached: 本回合是否附屏幕截图（有则 §6 插入「读取屏幕截图」说明，图片由调用方随用户消息多模态传入）
     - current_user_input: 当前用户本回合输入
-    - use_defaults_for_missing: 若 mem0/chat_history/vision_audio 未传且为 None/空，是否用 prompt_defaults 填充
+    - use_defaults_for_missing: 若 mem0/chat_history 未传且为 None/空，是否用 prompt_defaults 填充
     """
     persona = load_persona(persona_name if persona_name.endswith(".json") else f"{persona_name}.json")
     data = _persona_data(persona)
@@ -120,9 +122,7 @@ def build_messages(
         chat_history = defaults.get("chat_history", []) or []
     if chat_history is None:
         chat_history = []
-    if vision_audio_text is None and use_defaults_for_missing:
-        defaults = load_prompt_defaults()
-        vision_audio_text = defaults.get("vision_audio", "") or ""
+    # 环境感知仅在有真实传入时插入（主流程 orchestrator 当前恒传 None/空，不读默认，避免插假数据）
     if vision_audio_text is None:
         vision_audio_text = ""
 
@@ -166,14 +166,19 @@ def build_messages(
         if content and role in ("user", "assistant"):
             messages.append({"role": role, "content": content})
 
-    # 6. 环境感知 (prompt.md §6)
-    messages.append({"role": "system", "content": "[Vision And Audio]"})
-    if vision_audio_text and vision_audio_text.strip():
-        messages.append({"role": "system", "content": vision_audio_text.strip()})
+    # 6. 环境感知 (prompt.md §6)：屏幕截图说明 / 耳朵摘要；图片由调用方随本回合 user 消息传入
+    if vision_image_attached or (vision_audio_text and vision_audio_text.strip()):
+        messages.append({"role": "system", "content": "[Vision And Audio]"})
+        if vision_image_attached:
+            messages.append({"role": "system", "content": "附图视为当前看到的画面。"})
+        if vision_audio_text and vision_audio_text.strip():
+            messages.append({"role": "system", "content": vision_audio_text.strip()})
 
-    # 7. 用户当前回合，为空则不插入 (prompt.md §7)
+    # 7. 用户当前回合 (prompt.md §7)：有输入则用输入，无输入则用「继续说话」占位，保证本回合有一条 user
     if (current_user_input or "").strip():
         messages.append({"role": "user", "content": current_user_input.strip()})
+    else:
+        messages.append({"role": "user", "content": "(请根据上文以角色身份继续说话。)"})
 
     # 8. 输出风格限制 (prompt.md §8)
     if task:
