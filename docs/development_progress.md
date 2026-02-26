@@ -16,13 +16,13 @@
 | prompt_assembler | ✅ | 按 prompt.md §1–§8 顺序组装，不合并、用户可空 |
 | conscious | ✅ | Gemini 流式、消息逐条转 Content、无 API Key 时友好提示 |
 | chat_history_store | ✅ | JSON 持久化、每次加载最近 N 条、配置化路径与条数 |
-| memory | ⏳ 占位 | search / add_background 空实现，未接 Mem0 |
+| memory | ✅ | Mem0 长期记忆：Gemini embedder + LLM，本地 Qdrant；search / add_background 已接；mem0_infer 可配置「只抽事实」或「存原文」 |
 | tools_registry | ⏳ 占位 | 未实现业务工具，未接入 conscious |
 
-### 3. 调度与主循环（第一步闭环）
+### 3. 调度与主循环（第一步闭环 + 记忆）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| orchestrator | ✅ 部分 | 模拟输入 → 主脑流式 → 控制台；历史加载/写入；**未接** 真实 hearing/vision/mouth/player/body |
+| orchestrator | ✅ 部分 | 模拟输入 → 每轮前 memory.search → 主脑流式 → 控制台；历史加载/写入；每轮后 **await** memory.add_background；**未接** 真实 hearing/vision/mouth/player/body |
 | main.py | ✅ | 入口，asyncio 跑 orchestrator.run() |
 
 ### 4. 感官层
@@ -49,10 +49,10 @@
 
 ## 二、后续开发阶段建议
 
-### 阶段 2：记忆（Mem0）
-- **memory.py**：集成 Mem0（或 Qdrant/Chroma），实现 `search(query)`、`add_background(content)`。
-- **orchestrator / conscious**：每轮前 `mem0_lines = await memory.search(当前用户输入)` 传入组装；每轮后异步 `memory.add_background(回复摘要)`。
-- **可选**：配置中增加 Mem0/向量库相关项。
+### 阶段 2：记忆（Mem0）— ✅ 已完成
+- **memory.py**：已集成 Mem0，embedder 与 LLM 均用 Gemini（不依赖 OpenAI）；实现 `search(query, top_k)`、`add_background(user_input, reply_text)`；缺 key 或缺库时降级。
+- **orchestrator**：每轮前 `_mem0_lines = await memory.search(用户输入)` 传入主脑；每轮后 `await memory.add_background(user_input, reply_text)` 并等待落盘。
+- **config.yaml**：已增加 `mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`、可选 `mem0_vector_store_path`。数据目录为 `data/mem0/`（含 history.db、qdrant/）。查看向量库内容：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
 
 ### 阶段 3：耳朵（语音输入）
 - **hearing.py**：VAD（WebRTC VAD 或 Silero）+ 录音，静音检测结束送 Whisper（或本地 STT）得到文本。
@@ -92,4 +92,4 @@
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
-当前可运行链路：**模拟输入 → 提示词组装 → Gemini 流式 → 控制台输出 + 历史持久化**；其余感官与表达均为占位或未接入。
+当前可运行链路：**模拟输入 → Mem0 检索 → 提示词组装（含长期记忆）→ Gemini 流式 → 控制台输出 + 历史持久化 + 长期记忆写入**；其余感官与表达均为占位或未接入。

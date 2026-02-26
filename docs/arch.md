@@ -5,15 +5,27 @@
 ```text
 VedalAI_Project/
 ├── .env                    # [机密] 存放 API Keys (GEMINI_API_KEY, OPENAI_API_KEY, VTS_PORT)
-├── config.yaml             # [配置] 全局参数 (刷新频率, 音色, VAD灵敏度)
+├── config.yaml             # [配置] 全局参数 (主脑/记忆/日志/感官/表达)
 ├── main.py                 # [入口] 程序启动总入口
 ├── requirements.txt        # Python 依赖库列表
 ├── README.md               # 项目开发与运行文档
 ├── docs/                   # [文档] 架构与提示词说明
 │   ├── arch.md             # 本架构设计文档
+│   ├── development_progress.md  # 开发阶段与进度
 │   ├── prompt.md           # 提示词组装顺序说明
 │   ├── prompt.json         # 组装示例/参考
 │   └── assembled_prompt.json # 命令行组装输出 (python -m src.brain.prompt_assembler)
+│
+├── data/                   # [运行时数据]
+│   ├── chat_history.json   # 历史对话持久化 (条数见 config chat_history_max_entries)
+│   └── mem0/               # 长期记忆 (Mem0)：需配置 GEMINI_API_KEY 后使用
+│       ├── config.json     # Mem0 库内部配置
+│       ├── history.db     # 记忆元数据 (SQLite)
+│       ├── qdrant/         # 向量库目录 (嵌入向量与检索索引)
+│       └── migrations_qdrant/  # Qdrant 内部迁移目录，勿手动修改
+│
+├── scripts/                # [脚本]
+│   └── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆 (需先退出主程序)
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
@@ -71,17 +83,22 @@ VedalAI_Project/
 
 * **`orchestrator.py` (调度器)**
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
-* **执行逻辑**：
-1. 初始化所有感官和表达模块的实例。
-2. 启动 `asyncio.gather` 监听任务。
-3. 协调数据流：`hearing.py` 监听到用户说话 -> 触发 `vision.py` 获取当前屏幕 `PIL.Image` -> 将文本和图像打包发送给 `brain.conscious.py` -> 将生成的文本流管道接入 `expression.mouth.py`。
-
-
-* **中断处理**：监听用户插嘴事件，一旦检测到新输入，立即调用 `player.interrupt()` 清空播放队列并中断当前生成。
+* **当前执行逻辑（第一步闭环 + 长期记忆）**：
+1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
+2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`，再调用 `conscious.chat_stream(..., mem0_lines=_mem0_lines, chat_history=...)` 做主脑流式生成并打印。
+3. 每轮结束：追加本轮 user/assistant 到历史并持久化；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮（避免 Ctrl+C 退出时未落盘）。
+4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`。
 
 
 * **`config_loader.py`**
-* **核心职责**：单例模式的配置加载器。将 `config.yaml` 的业务配置（如 `vision_interval`, `tts_voice`）和 `.env` 的机密凭证合并为一个全局可访问的配置对象。
+* **核心职责**：单例模式的配置加载器。将 `config.yaml` 的业务配置和 `.env` 的机密凭证合并为一个全局可访问的配置对象。
+
+* **配置项摘要（config.yaml + .env）**
+  * **.env**：`GEMINI_API_KEY`（主脑与 Mem0 共用）、`OPENAI_API_KEY`、`VTS_PORT`。
+  * **主脑**：`gemini_model`。
+  * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
+  * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
+  * **日志**：`log_dir`、`log_file`。**感官/表达**：`vision_interval`、`tts_voice`、`vad_sensitivity`、`vts_host`、`vts_port`。
 
 
 * **`logger.py`**
@@ -124,7 +141,11 @@ VedalAI_Project/
 
 * **`memory.py` (海马体 - Mem0)**
 * **核心职责**：维护长期记忆与人格一致性。
-* **实现细节**：封装 Mem0 库。配置使用 OpenAI API 生成 Embedding 并存储在轻量级向量库（如 Qdrant / Chroma 内存版）。提供 `search()` 方法供对话前查询，提供 `add_background()` 异步方法在每次对话结束后提取事实并更新记忆库，确保写入过程不阻塞主回复流。
+* **实现细节**：
+  * 封装 Mem0，**全部使用 Gemini**（不依赖 OpenAI）：嵌入模型 `mem0_embedder_model`（如 `gemini-embedding-001`）、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（路径见 `mem0_vector_store_path`，默认 `data/mem0/qdrant`）。数据目录通过 `MEM0_DIR` 设为 `data/mem0`（含 `history.db` 与 `qdrant/`）。
+  * **`search(query, top_k)`**：按语义检索相关记忆，供每轮对话前传入主脑。
+  * **`add_background(user_input, reply_text)`**：每轮结束后写入记忆。由 `config.yaml` 的 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant，由 LLM 抽取事实再写入（推荐）；`false` 时直接存助手回复原文。
+  * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级（search 返回空列表，add_background 静默跳过）。
 
 
 
