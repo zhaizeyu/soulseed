@@ -13,9 +13,9 @@ aiofiles>=23.2.0
 mss>=9.0.1
 Pillow>=10.0.0
 
-# 语音 (STT / VAD / TTS)：STT 使用 Gemini 多模态转写，与主脑共用 google-generativeai
+# 语音 (STT / VAD / TTS)
+edge-tts>=6.1.0   # TTS，嘴巴播报「说的话」；config tts_voice
 # webrtcvad 或 silero-vad
-# edge-tts 或 fish-speech 等
 
 # 大脑 (Gemini)：主脑用 google-generativeai；Mem0 的 Gemini 用 google-genai
 google-generativeai>=0.8.0

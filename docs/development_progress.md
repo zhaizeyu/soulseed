@@ -34,7 +34,7 @@
 ### 5. 表达层
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| mouth | ⏳ 占位 | 未按句 TTS、未入队 |
+| mouth | ✅ 部分 | Edge-TTS：`text_to_speech_async` 返回 mp3；Web 端 POST /api/tts，前端流式结束后自动播报「说的话」 |
 | player | ⏳ 占位 | 无播放队列、interrupt、RMS 送 body |
 | body | ⏳ 占位 | 后端计算口型/表情参数并推送给 Web 前端；前端用 Cubism Web SDK 渲染 Live2D |
 
@@ -63,6 +63,7 @@
 
 ### 阶段 3：耳朵（语音输入）— ✅ Web 已接
 - **hearing.py**：`speech_to_text(audio_bytes, filename)` 使用 **Google Gemini** 多模态做语音转写，供 Web `POST /api/speech-to-text` 使用；与主脑共用 GEMINI_API_KEY 与 gemini_model，未配置时跳过并打日志。
+- **mouth.py**：`text_to_speech_async(text)` 使用 **Edge-TTS** 合成 mp3，供 Web `POST /api/tts`；前端在助手回复流式结束后自动解析「说的话」并依次请求 TTS 播放。
 - **Web 前端**：输入框旁麦克风按钮，点击录音、再点击停止并上传音频，识别结果追加到输入框。
 - **CLI（可选）**：VAD + 本地录音后调 `speech_to_text`，orchestrator 用语音替代 `input()`；插嘴时 `player.interrupt()`。
 

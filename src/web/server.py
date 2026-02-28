@@ -10,7 +10,7 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from src.core.config_loader import get_config
@@ -20,6 +20,7 @@ from src.brain import memory as memory_module
 from src.brain.chat_history_store import load_history
 from src.senses import vision as vision_module
 from src.senses import hearing as hearing_module
+from src.expression import mouth as mouth_module
 
 logger = get_logger(__name__)
 
@@ -117,6 +118,10 @@ class ChatRequest(BaseModel):
     message: str = ""
 
 
+class TtsRequest(BaseModel):
+    text: str = ""
+
+
 def _sse_line(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
@@ -147,6 +152,15 @@ async def root():
 @app.get("/api/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/api/config")
+async def get_client_config():
+    """返回前端所需配置（如是否开启语音回复），不暴露敏感项。"""
+    cfg = get_config()
+    return {
+        "tts_reply_enabled": bool(cfg.get("tts_reply_enabled", True)),
+    }
 
 
 @app.get("/api/history")
@@ -211,3 +225,15 @@ async def speech_to_text_api(audio: UploadFile = File(...)):
         lambda: hearing_module.speech_to_text(body, filename),
     )
     return {"text": text}
+
+
+@app.post("/api/tts")
+async def tts_api(request: TtsRequest):
+    """
+    TTS：将文本合成为语音，返回 mp3 音频流。
+    请求体：{"text": "要读的句子"}。用于前端播报助手回复中的「说的话」。
+    """
+    audio_bytes = await mouth_module.text_to_speech_async(request.text or "")
+    if not audio_bytes:
+        return Response(content=b"", status_code=200, media_type="audio/mpeg")
+    return Response(content=audio_bytes, media_type="audio/mpeg")

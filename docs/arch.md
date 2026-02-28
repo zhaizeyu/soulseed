@@ -114,7 +114,7 @@ VedalAI_Project/
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
   * **日志**：`log_dir`、`log_file`。
   * **眼睛**：`vision_enabled`、`vision_max_longer_side`（先缩放再送主脑）；`vision_save_enabled`、`vision_save_dir`（截图存 data）、`vision_save_format`（jpg/png）、`vision_jpeg_quality`；**心跳检测**：`vision_heartbeat_enabled`、`vision_heartbeat_interval_sec`（如 30）、`vision_heartbeat_diff_threshold`（差异阈值 0~1）。
-  * **感官/表达**：`vision_interval`、`tts_voice`、`vad_sensitivity`、`vts_host`、`vts_port`。
+  * **感官/表达**：`vision_interval`、`tts_voice`、`tts_reply_enabled`（是否开启助手语音回复）、`vad_sensitivity`、`vts_host`、`vts_port`。
 
 
 * **`logger.py`**
@@ -162,9 +162,9 @@ VedalAI_Project/
 
 ### D. 表达层 (`src/expression/`)
 
-* **`mouth.py` (发声器官)**
-* **核心职责**：将文本转化为语音。
-* **实现细节**：监听 `conscious.py` 传来的文本流。通过正则表达式缓存句子，遇到标点符号（如 `. ! ? 。 ！ ？`）即刻切断，并将该句异步发送至 TTS 引擎（如 Edge-TTS 或 FishAudio API）。将生成的音频文件路径压入播放队列。
+* **`mouth.py` (嘴巴)**
+* **核心职责**：将文本合成为语音，供 Web 播报「说的话」。
+* **实现细节**：`text_to_speech_async(text)` 使用 **Edge-TTS** 合成，返回 mp3 字节；音色由 config `tts_voice`（如 `zh-CN-XiaoxiaoNeural`）指定。Web 端：当 config `tts_reply_enabled` 为 true 时，助手回复流式结束后前端解析「说的话」并请求 `POST /api/tts` 播放；为 false 时不播报。
 
 
 * **`player.py` (播放器)**

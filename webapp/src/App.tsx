@@ -68,6 +68,15 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const lastStreamedContentRef = useRef<string>("");
+  const [ttsReplyEnabled, setTtsReplyEnabled] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/config`)
+      .then((r) => r.ok ? r.json() : {})
+      .then((d: { tts_reply_enabled?: boolean }) => setTtsReplyEnabled(d.tts_reply_enabled !== false))
+      .catch(() => setTtsReplyEnabled(true));
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -76,6 +85,57 @@ export default function App() {
   useEffect(() => {
     scrollToBottom();
   }, [messages.length, streamingTurn?.assistantContent, scrollToBottom]);
+
+  // 流式时缓存当前内容，便于结束后播报「说的话」
+  useEffect(() => {
+    if (streamingTurn?.assistantContent)
+      lastStreamedContentRef.current = streamingTurn.assistantContent;
+  }, [streamingTurn?.assistantContent]);
+
+  // 流式结束后：识别「说的话」并依次 TTS 播报
+  const playSpeechSegments = useCallback(async (content: string) => {
+    const segments = parseContentSegments(content).filter((s) => s.type === "speech");
+    if (segments.length === 0) return;
+    const playNext = async (index: number) => {
+      if (index >= segments.length) return;
+      const text = segments[index].text.trim();
+      if (!text) {
+        playNext(index + 1);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/api/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          playNext(index + 1);
+        };
+        audio.onerror = () => {
+          URL.revokeObjectURL(url);
+          playNext(index + 1);
+        };
+        await audio.play();
+      } catch {
+        playNext(index + 1);
+      }
+    };
+    playNext(0);
+  }, []);
+
+  useEffect(() => {
+    if (streamingTurn !== null || !ttsReplyEnabled) return;
+    const content = lastStreamedContentRef.current;
+    if (!content) return;
+    lastStreamedContentRef.current = "";
+    playSpeechSegments(content);
+  }, [streamingTurn, ttsReplyEnabled, playSpeechSegments]);
 
   const displayMessages = [...messages];
   if (streamingTurn) {
