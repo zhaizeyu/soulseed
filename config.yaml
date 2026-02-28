@@ -8,6 +8,9 @@ log_file: "vedalai.log"
 chat_history_file: "data/chat_history.json"
 chat_history_max_entries: 20
 
+# 调试：开启后在每次发送给大模型前将组装好的完整提示词打印到日志 (logs/vedalai.log)
+debug_log_prompt: false
+
 # 主脑 (Gemini)
 gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp
 

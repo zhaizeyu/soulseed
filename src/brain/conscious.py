@@ -3,6 +3,7 @@
 按 prompt_assembler 的消息顺序逐条喂给大模型，不合并 system；Gemini 仅支持 user/model，
 故将 system 转为带 [System] 标记的 user + 空 model 以保持顺序。
 """
+import json
 import warnings
 from typing import Any, AsyncIterator
 
@@ -94,6 +95,17 @@ async def chat_stream(
         yield ""
         return
 
+    # 调试：将组装好的完整提示词打印到日志（config debug_log_prompt=true）
+    if config.get("debug_log_prompt"):
+        try:
+            raw = json.dumps(messages, ensure_ascii=False, indent=2)
+            max_len = 50000
+            if len(raw) > max_len:
+                raw = raw[:max_len] + f"\n... [已截断，共 {len(raw)} 字 ]"
+            logger.info("[主脑] 完整组装提示词（发送前）:\n%s", raw)
+        except Exception as e:
+            logger.warning("[主脑] 打印组装提示词失败: %s", e)
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=FutureWarning)
@@ -118,8 +130,13 @@ async def chat_stream(
             user_message = [user_message, vision_image]
         response = chat.send_message(user_message, stream=True)
         for chunk in response:
-            if chunk.text:
-                yield chunk.text
+            try:
+                if chunk.text:
+                    yield chunk.text
+            except (ValueError, AttributeError):
+                # 无有效 Part：Gemini 触发了安全/引用等过滤，流在此结束，后续不再有 chunk，故输出会截断
+                logger.warning("[主脑] 流式返回无有效 Part，输出已截断（多为安全/引用过滤，见 https://ai.google.dev/api/generate-content#finishreason）")
+                pass
     except Exception as e:
         logger.exception("Gemini 流式调用异常: %s", e)
         err_msg = str(e).strip()

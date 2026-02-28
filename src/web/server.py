@@ -8,7 +8,7 @@ import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -19,6 +19,7 @@ from src.web.service import ConversationService, HEARTBEAT_PROACTIVE_PROMPT
 from src.brain import memory as memory_module
 from src.brain.chat_history_store import load_history
 from src.senses import vision as vision_module
+from src.senses import hearing as hearing_module
 
 logger = get_logger(__name__)
 
@@ -189,3 +190,24 @@ async def chat_sync(request: ChatRequest):
     if reply_text:
         await memory_module.add_background(message.strip() or None, reply_text)
     return {"reply": reply_text}
+
+
+@app.post("/api/speech-to-text")
+async def speech_to_text_api(audio: UploadFile = File(...)):
+    """
+    语音转文本：上传一段音频（webm/mp3/wav 等），返回识别文本。
+    请求：multipart/form-data，字段名 audio，文件为浏览器 MediaRecorder 等录制的音频。
+    响应：{"text": "识别结果"}，使用 Gemini 转写（与主脑共用 GEMINI_API_KEY）；失败或未配置时 text 可为空。
+    """
+    try:
+        body = await audio.read()
+        filename = audio.filename or "audio.webm"
+    except Exception as e:
+        logger.warning("读取上传音频失败: %s", e)
+        return {"text": ""}
+    loop = asyncio.get_event_loop()
+    text = await loop.run_in_executor(
+        None,
+        lambda: hearing_module.speech_to_text(body, filename),
+    )
+    return {"text": text}

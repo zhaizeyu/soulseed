@@ -24,9 +24,10 @@ stop_by_port() {
   done
 }
 
+# 先按 PID 文件停掉 start_web 启动的进程
 if stop_by_pid_file; then
   echo "已按 PID 文件停止。"
-else
-  stop_by_port
-  echo "已按端口 8765/5173 清理。"
 fi
+# 再按端口清理，避免其它终端单独启动的前端/后端残留
+stop_by_port
+echo "已按端口 8765/5173 清理。"

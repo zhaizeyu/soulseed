@@ -1,10 +1,12 @@
 # 数字生命 MVP 架构设计文档 (基于 Gemini 多模态原生架构)
 
+**模型与 API**：主脑、长期记忆（Mem0）、语音转写（STT）均使用 **Google Gemini**，仅需配置 `GEMINI_API_KEY`，无 OpenAI 或其他厂商依赖。
+
 ## 📐 1. 项目目录结构总览
 
 ```text
 VedalAI_Project/
-├── .env                    # [机密] 存放 API Keys (GEMINI_API_KEY, OPENAI_API_KEY)
+├── .env                    # [机密] 存放 API Key：GEMINI_API_KEY（主脑、Mem0、语音转写均用 Google Gemini）
 ├── config.yaml             # [配置] 全局参数 (主脑/记忆/日志/感官/表达)
 ├── main.py                 # [入口] 程序启动总入口
 ├── requirements.txt        # Python 依赖库列表
@@ -105,7 +107,8 @@ VedalAI_Project/
 * **核心职责**：单例模式的配置加载器。将 `config.yaml` 的业务配置和 `.env` 的机密凭证合并为一个全局可访问的配置对象。
 
 * **配置项摘要（config.yaml + .env）**
-  * **.env**：`GEMINI_API_KEY`（主脑与 Mem0 共用）、`OPENAI_API_KEY`。
+  * **.env**：`GEMINI_API_KEY`（主脑、Mem0、语音转写 STT 均用此 Key，全为 Google 系列）。
+  * **调试**：`debug_log_prompt`（true=每次请求前将组装好的完整提示词打印到日志）。
   * **主脑**：`gemini_model`。
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
@@ -122,8 +125,8 @@ VedalAI_Project/
 ### B. 感官层 (`src/senses/`)
 
 * **`hearing.py` (耳朵)**
-* **核心职责**：捕捉外部语音指令并转为文本。
-* **实现细节**：集成 WebRTC VAD 或 Silero VAD 进行环境音检测。当音量超过阈值触发录音，检测到持续静音（如 1 秒）则停止录音。将截获的音频块发送至 Whisper API，返回识别出的 `str` 文本。
+* **核心职责**：语音转文本 (STT)，供 Web 与后续 CLI 使用。
+* **实现细节**：`speech_to_text(audio_bytes, filename)` 使用 **Google Gemini** 多模态（上传音频后转写），支持 webm/mp3/wav 等；与主脑共用 `GEMINI_API_KEY` 与 config 中的 `gemini_model`。未配置 Key 时返回空并打日志。**Web**：前端录音后 POST 到 `POST /api/speech-to-text`，后端调本函数返回 `{"text": "..."}`。CLI 端 VAD + 本地录音后调本函数（后续接入）。
 
 
 * **`vision.py` (眼睛)**
@@ -150,7 +153,7 @@ VedalAI_Project/
 * **`memory.py` (海马体 - Mem0)**
 * **核心职责**：维护长期记忆与人格一致性。
 * **实现细节**：
-  * 封装 Mem0，**全部使用 Gemini**（不依赖 OpenAI）：嵌入模型 `mem0_embedder_model`、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（默认 `data/mem0/qdrant`）。数据目录 `MEM0_DIR=data/mem0`。
+  * 封装 Mem0，**全部使用 Google Gemini**：嵌入模型 `mem0_embedder_model`、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（默认 `data/mem0/qdrant`）。数据目录 `MEM0_DIR=data/mem0`。
   * **`search(query, top_k)`**：按语义检索相关记忆；**query 为空时直接返回 []**，不调用 Mem0（避免 Gemini 报 400）。
   * **`add_background(user_input, reply_text)`**：每轮结束后写入记忆。由 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant 抽事实；`false` 或 user 为空时存助手回复原文。事实抽取若遇非法 JSON 会降级存原文；Mem0 的 Invalid JSON 日志已过滤不刷控制台。
   * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级。
@@ -183,7 +186,7 @@ VedalAI_Project/
 
 * **`server.py` (FastAPI)**
 * **核心职责**：暴露 HTTP API，供前端调用；**Web 模式含眼睛心跳**与统一日志。
-* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式。`message` 可为空表示继续说话。启动时（lifespan）根据 config 启动后台心跳任务：每 N 秒调用 `vision.check_heartbeat()`，有变化则执行一轮主动说话并写入历史（与 CLI 共用 `chat_history_store`）；日志写入 config 的 `log_dir`/`log_file`（默认 `logs/vedalai.log`），与 CLI 同文件。详见 `docs/web.md`。
+* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式；`POST /api/speech-to-text` 接收上传音频，调 `hearing.speech_to_text`（Gemini 转写）返回识别文本，与主脑共用 `GEMINI_API_KEY`。启动时（lifespan）根据 config 启动后台心跳任务；日志写入 config 的 `log_dir`/`log_file`。详见 `docs/web.md`。
 
 
 

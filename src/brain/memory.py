@@ -1,6 +1,6 @@
 """
 海马体 — 封装 Mem0，负责长期记忆的异步写入与检索。
-使用 Gemini 作为 embedder 与 LLM，不依赖 OpenAI。
+使用 Google Gemini 作为 embedder 与 LLM，与主脑、语音转写统一为 Google 系列。
 提供 search() 与 add_background() 异步方法。
 """
 import asyncio

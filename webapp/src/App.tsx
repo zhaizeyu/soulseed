@@ -1,10 +1,12 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Send } from "lucide-react";
+import { Send, Mic, Square } from "lucide-react";
 import { useChatHistory } from "@/hooks/use-chat-history";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { parseContentSegments } from "@/lib/format-content";
 import { cn } from "@/lib/utils";
+
+const API_BASE = import.meta.env.VITE_API_URL ?? "";
 
 /** 将段落内的 `code` 渲染为等宽高亮 */
 function withCodeParts(text: string) {
@@ -59,9 +61,13 @@ const ASSISTANT_LABEL = "助手";
 
 export default function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const { data: messages = [], isLoading: loadingHistory } = useChatHistory();
   const { sendMessage, loading, streamingTurn } = useChatStream();
   const [input, setInput] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -93,6 +99,55 @@ export default function App() {
       handleSubmit();
     }
   };
+
+  const sendAudioToStt = useCallback(async (blob: Blob) => {
+    setSpeechError(null);
+    const form = new FormData();
+    form.append("audio", blob, "audio.webm");
+    try {
+      const res = await fetch(`${API_BASE}/api/speech-to-text`, {
+        method: "POST",
+        body: form,
+      });
+      if (!res.ok) throw new Error(res.statusText);
+      const data = (await res.json()) as { text?: string };
+      const text = (data.text ?? "").trim();
+      if (text) setInput((prev) => (prev ? prev + " " + text : text));
+    } catch (e) {
+      setSpeechError(e instanceof Error ? e.message : "识别失败");
+    }
+  }, []);
+
+  const handleMicClick = useCallback(() => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+      mediaRecorderRef.current = null;
+      setIsRecording(false);
+      return;
+    }
+    setSpeechError(null);
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then((stream) => {
+        streamRef.current = stream;
+        const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+          ? "audio/webm;codecs=opus"
+          : "audio/webm";
+        const mr = new MediaRecorder(stream);
+        mediaRecorderRef.current = mr;
+        const chunks: Blob[] = [];
+        mr.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
+        mr.onstop = () => {
+          const blob = new Blob(chunks, { type: mimeType });
+          sendAudioToStt(blob);
+        };
+        mr.start();
+        setIsRecording(true);
+      })
+      .catch((e) => setSpeechError(e?.message ?? "无法访问麦克风"));
+  }, [isRecording, sendAudioToStt]);
 
   return (
     <div className="flex h-dvh w-full bg-[#0f1117] text-slate-300 font-sans antialiased overflow-hidden">
@@ -198,9 +253,31 @@ export default function App() {
           <div ref={bottomRef} className="h-4" />
         </div>
 
-        {/* 输入栏 — 贴底通栏 */}
+        {/* 输入栏 — 贴底通栏，支持语音输入 */}
         <div className="shrink-0 border-t border-white/[0.06] bg-[#0f1117]">
+          {speechError && (
+            <p className="px-4 py-1 text-xs text-amber-500/90" role="alert">
+              {speechError}
+            </p>
+          )}
           <div className="flex items-center gap-2 px-4 py-2">
+            <button
+              type="button"
+              onClick={handleMicClick}
+              disabled={loading}
+              className={cn(
+                "p-2 transition-all duration-200 flex items-center justify-center rounded",
+                isRecording
+                  ? "text-red-400 hover:text-red-300 bg-red-500/10"
+                  : !loading
+                    ? "text-slate-400 hover:text-white"
+                    : "text-slate-700 cursor-not-allowed"
+              )}
+              aria-label={isRecording ? "停止录音" : "语音输入"}
+              title={isRecording ? "点击停止并识别" : "点击开始录音"}
+            >
+              {isRecording ? <Square size={18} /> : <Mic size={18} />}
+            </button>
             <input
               type="text"
               value={input}
@@ -211,7 +288,7 @@ export default function App() {
                   handleSubmit();
                 }
               }}
-              placeholder="输入想发送的消息，或输入 /? 获取帮助"
+              placeholder="输入想发送的消息，或点击麦克风语音输入"
               disabled={loading}
               className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 py-2 text-sm placeholder-slate-600 focus:outline-none disabled:opacity-60"
               aria-label="输入消息"

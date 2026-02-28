@@ -13,8 +13,7 @@ aiofiles>=23.2.0
 mss>=9.0.1
 Pillow>=10.0.0
 
-# 语音 (STT / VAD / TTS，按需安装)
-# openai-whisper 或 其他 STT
+# 语音 (STT / VAD / TTS)：STT 使用 Gemini 多模态转写，与主脑共用 google-generativeai
 # webrtcvad 或 silero-vad
 # edge-tts 或 fish-speech 等
 
@@ -28,9 +27,10 @@ google-genai>=1.0.0
 # VTube Studio
 # pyvts
 
-# Web (FastAPI，与 main 解耦)
+# Web (FastAPI，与 main 解耦；语音上传需 multipart)
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
+python-multipart>=0.0.6
 
 # 日志与工具
 colorlog>=6.8.0

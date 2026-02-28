@@ -29,7 +29,7 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | vision | ✅ | capture_screen() + get_screen_for_turn()；**心跳检测**：每 N 秒（如 30）截图与上一帧缩略图对比，差异超阈值则触发主动说话（check_heartbeat）；已接入 orchestrator 队列 |
-| hearing | ⏳ 占位 | 无 VAD、录音、Whisper |
+| hearing | ✅ 部分 | Web：`speech_to_text(audio_bytes)` 使用 **Gemini** 多模态转写，与主脑共用 GEMINI_API_KEY；CLI 端 VAD+录音未接 |
 
 ### 5. 表达层
 | 模块 | 状态 | 说明 |
@@ -48,8 +48,8 @@
 ### 7. Web 模块 — ✅ 已完成
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py FastAPI：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync；**Web 模式眼睛心跳**（后台每 N 秒检测，有变化则主动说话并写入历史）；**日志**写入 logs/vedalai.log（与 CLI 同） |
-| webapp | ✅ | Vite + React + TypeScript + Tailwind + shadcn/ui 风格；深色主题、输入框贴底、空输入可发送；format-content.ts 解析心理/说的话/场景、反引号高亮；轮询 /api/history 可见心跳触发的主动消息 |
+| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync、**POST /api/speech-to-text**（语音转文本）；Web 心跳 + 日志见上 |
+| webapp | ✅ | 深色主题、输入框贴底、空输入可发送；**输入框左侧麦克风**：点击录音→停止后上传 STT，结果追加到输入框；format-content 心理/说的话/场景、反引号高亮；轮询 /api/history |
 | scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
 
 ---
@@ -57,13 +57,14 @@
 ## 二、后续开发阶段建议
 
 ### 阶段 2：记忆（Mem0）— ✅ 已完成
-- **memory.py**：已集成 Mem0，embedder 与 LLM 均用 Gemini（不依赖 OpenAI）；实现 `search(query, top_k)`、`add_background(user_input, reply_text)`；缺 key 或缺库时降级。
+- **memory.py**：已集成 Mem0，embedder 与 LLM 均用 **Google Gemini**；实现 `search(query, top_k)`、`add_background(user_input, reply_text)`；缺 key 或缺库时降级。
 - **orchestrator**：每轮前 `_mem0_lines = await memory.search(用户输入)` 传入主脑；每轮后 `await memory.add_background(user_input, reply_text)` 并等待落盘。
 - **config.yaml**：已增加 `mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`、可选 `mem0_vector_store_path`。数据目录为 `data/mem0/`（含 history.db、qdrant/）。查看向量库内容：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
 
-### 阶段 3：耳朵（语音输入）
-- **hearing.py**：VAD（WebRTC VAD 或 Silero）+ 录音，静音检测结束送 Whisper（或本地 STT）得到文本。
-- **orchestrator**：用 `hearing` 的语音流/事件替代 `input()`，得到用户文本后仍走现有 `_run_one_turn`；支持「插嘴」时调用 `player.interrupt()`（若已实现播放）。
+### 阶段 3：耳朵（语音输入）— ✅ Web 已接
+- **hearing.py**：`speech_to_text(audio_bytes, filename)` 使用 **Google Gemini** 多模态做语音转写，供 Web `POST /api/speech-to-text` 使用；与主脑共用 GEMINI_API_KEY 与 gemini_model，未配置时跳过并打日志。
+- **Web 前端**：输入框旁麦克风按钮，点击录音、再点击停止并上传音频，识别结果追加到输入框。
+- **CLI（可选）**：VAD + 本地录音后调 `speech_to_text`，orchestrator 用语音替代 `input()`；插嘴时 `player.interrupt()`。
 
 ### 阶段 4：嘴 + 播放器（语音输出）
 - **mouth.py**：消费主脑文本流，按句切分，调用 Edge-TTS / FishAudio 等生成音频，路径入队。
