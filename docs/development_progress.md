@@ -45,6 +45,13 @@
 | api_client | ⏳ 占位 | 未实现 aiohttp 封装 |
 | assets | ✅ | personas、prompts、world_books、sounds、temp 就绪 |
 
+### 7. Web 模块 — ✅ 已完成
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py FastAPI：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync；空输入=继续说话 |
+| webapp | ✅ | Vite + React + TypeScript + Tailwind + shadcn/ui 风格；深色主题、输入框贴底、空输入可发送；format-content.ts 解析心理/说的话/场景、反引号高亮 |
+| scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
+
 ---
 
 ## 二、后续开发阶段建议
@@ -81,6 +88,14 @@
 - 用 **asyncio.gather** 同时跑：语音监听、视觉定时采样、主脑流式、TTS 入队、播放、VTS 更新。
 - 统一**插嘴**逻辑：新语音触发时 interrupt + 重新组 prompt 并请求主脑。
 - 错误重试、超时、日志标签（如 [AUDIO]、[VISION]）完善；可选 api_client 统一 HTTP。
+
+### 建议补充：prompt_assembler 格式规则 (§7.5)
+- 在 §8 输出风格限制之前插入 **格式规则** 提示词，约束模型输出格式：
+  - 场景：`*场景*`
+  - 心理：`(心理)`
+  - 语言：直接输出
+  - 【绝对格式铁律】：禁止嵌套；动作和心理描写必须独立成句，不能夹杂在语言中间。
+- 若采用 `*...*` 作为场景标记，需在 `webapp/src/lib/format-content.ts` 中增加对应解析，前端用白色渲染。
 
 ---
 

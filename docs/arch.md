@@ -172,3 +172,30 @@ VedalAI_Project/
 * **`body.py` (物理表征 - VTS 接口)**
 * **核心职责**：驱动 Live2D 皮套动作。
 * **实现细节**：基于 `pyvts` 建立与 VTube Studio 的 WebSocket 连接。接收 `player.py` 计算出的音频 RMS（响度），将其映射为 VTS 中的 `MouthOpen` 参数以实现精准唇形同步（Lip-sync）。同时正则匹配主脑输出文本中的情感标签（如 `*laughs*`），触发预设的面部表情热键。
+
+
+
+### E. Web 层 (`src/web/`)
+
+* **`service.py` (对话服务)**
+* **核心职责**：封装单轮对话逻辑，与 CLI 共用 `chat_history_store`（唯一数据源）。
+* **实现细节**：Mem0 检索 → 截屏（vision）→ 主脑流式；历史读写 `config.chat_history_file`（默认 `data/chat_history.json`）。空输入表示「继续说话」，与 orchestrator 行为一致。
+
+* **`server.py` (FastAPI)**
+* **核心职责**：暴露 HTTP API，供前端调用。
+* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式。`message` 可为空表示继续说话。详见 `docs/web.md`。
+
+
+
+### F. 前端 (webapp/)
+
+* **技术栈**：Vite + React + TypeScript + Tailwind + shadcn/ui 风格 + Lucide + TanStack Query + Framer Motion。
+* **UI 与渲染**：
+  * **配色**：深色主题（背景 `#0f1117`），顶栏 VedalAI | Terminal，绿色状态点、Secure/Online。
+  * **输入框**：固定在底部（`shrink-0`），贴底通栏；**空输入也可发送**（继续说话）。
+  * **消息渲染**：`webapp/src/lib/format-content.ts` 解析助手回复，按类型分段：
+    * `(...)` / `（...）` → 心理想的（褐色斜体 `text-thought`）
+    * `"..."` / `「...」` / 弯双引号 `"..."` → 说的话（黄色 `text-speech`）
+    * 其余 → 场景描写（白色）
+    * 单引号 `'...'` 不视为说的话
+  * **反引号**：`` `code` `` 使用蓝色高亮（`text-indigo-300` + `bg-white/[0.05]`）。
