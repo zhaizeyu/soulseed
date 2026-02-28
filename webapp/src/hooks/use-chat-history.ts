@@ -20,5 +20,7 @@ export function useChatHistory() {
     queryFn: fetchHistory,
     retry: 1,
     refetchOnWindowFocus: true,
+    // 每 10 秒轮询一次，便于收到心跳触发的主动消息
+    refetchInterval: 10_000,
   });
 }

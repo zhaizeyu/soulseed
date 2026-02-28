@@ -1,9 +1,10 @@
 """
 对话服务 — 与 orchestrator 解耦，仅封装「单轮对话」逻辑，供 Web API 调用。
 复用 config、memory、conscious、vision；历史与 CLI 共用唯一数据源（config chat_history_file）。
+支持心跳触发：外部传入 vision_image_override 与主动说话提示词即可跑「主动回合」。
 """
 import asyncio
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from src.core.config_loader import get_config
 from src.core.logger import get_logger
@@ -13,6 +14,9 @@ from src.brain.chat_history_store import load_history, append_turns
 from src.senses import vision as vision_module
 
 logger = get_logger(__name__)
+
+# 心跳触发时注入的用户侧提示，与 CLI 一致
+HEARTBEAT_PROACTIVE_PROMPT = "（系统：画面发生了你感兴趣的变化，请根据当前画面主动说说你的看法。）"
 
 _DEFAULT_MAX_ENTRIES = 20
 
@@ -32,10 +36,15 @@ class ConversationService:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, vision_module.get_screen_for_turn)
 
-    async def run_one_turn(self, user_input: str) -> AsyncIterator[str]:
+    async def run_one_turn(
+        self,
+        user_input: str,
+        vision_image_override: Any = None,
+    ) -> AsyncIterator[str]:
         """
-        执行一轮：Mem0 检索 → 截屏（可选）→ 主脑流式生成；yield 文本片段。
+        执行一轮：Mem0 检索 → 截屏（或使用 vision_image_override）→ 主脑流式生成；yield 文本片段。
         调用方在迭代结束后需调用 commit_turn(user_input, full_reply) 写入历史与记忆。
+        vision_image_override 非空时用于心跳触发的主动回合，不再本回合截屏。
         """
         query = (user_input or "").strip()
         try:
@@ -45,7 +54,7 @@ class ConversationService:
             logger.debug("Mem0 检索跳过: %s", e)
             mem0_lines = []
 
-        vision_image = await self._get_vision_image()
+        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
         use_defaults = len(self._chat_history) == 0
 
         async for chunk in conscious.chat_stream(

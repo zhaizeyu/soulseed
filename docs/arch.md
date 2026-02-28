@@ -57,7 +57,7 @@ VedalAI_Project/
     ├── senses/             # === 感官层 (数据输入) ===
     │   ├── __init__.py
     │   ├── hearing.py      # [耳朵] 麦克风录音控制、静音检测 (VAD)、语音转文本 (STT)
-    │   └── vision.py       # [眼睛] 屏幕截取，直接输出图像对象，无 API 消耗
+    │   └── vision.py       # [眼睛] 屏幕截取、心跳检测（定时截图对比，有变化则触发主动说话）
     │
     ├── brain/              # === 大脑层 (认知与决策) ===
     │   ├── __init__.py
@@ -96,7 +96,7 @@ VedalAI_Project/
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
 * **当前执行逻辑（第一步闭环 + 长期记忆）**：
 1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
-2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0**）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。
+2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0**）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒（如 30 秒）调用 `vision.check_heartbeat()`，当前帧与上一帧缩略图对比，差异超过阈值则向队列注入一条「画面发生了你感兴趣的变化…」回合，带当前截图触发主脑主动说话。
 3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮。
 4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`；`body` 计算参数并推送给 Web 前端以驱动 Live2D。
 
@@ -110,7 +110,7 @@ VedalAI_Project/
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
   * **日志**：`log_dir`、`log_file`。
-  * **眼睛**：`vision_enabled`、`vision_max_longer_side`（先缩放再送主脑）；`vision_save_enabled`、`vision_save_dir`（截图存 data）、`vision_save_format`（jpg/png）、`vision_jpeg_quality`。
+  * **眼睛**：`vision_enabled`、`vision_max_longer_side`（先缩放再送主脑）；`vision_save_enabled`、`vision_save_dir`（截图存 data）、`vision_save_format`（jpg/png）、`vision_jpeg_quality`；**心跳检测**：`vision_heartbeat_enabled`、`vision_heartbeat_interval_sec`（如 30）、`vision_heartbeat_diff_threshold`（差异阈值 0~1）。
   * **感官/表达**：`vision_interval`、`tts_voice`、`vad_sensitivity`、`vts_host`、`vts_port`。
 
 
@@ -127,8 +127,8 @@ VedalAI_Project/
 
 
 * **`vision.py` (眼睛)**
-* **核心职责**：获取数字生命的视觉输入，供主脑多模态使用。
-* **实现细节**：基于 `mss` 抓取主屏，返回 `PIL.Image`。`get_screen_for_turn()` 先按 `vision_max_longer_side` 缩放（压缩尺寸、省 token），再按 `vision_save_enabled` / `vision_save_dir` 将截图写入 `data/vision/`（文件名 `screenshot_YYYYMMDD_HHMMSS.jpg` 或 `.png`），最后返回图像供主脑多模态。配置项：`vision_save_format`（jpg/png）、`vision_jpeg_quality`（存为 jpg 时质量）。调度器每轮在 executor 中调用取图并传入 `conscious.chat_stream(..., vision_image=...)`。
+* **核心职责**：获取数字生命的视觉输入，供主脑多模态使用；**心跳检测**：定时截图与上一帧对比，有显著变化则触发主动说话。
+* **实现细节**：基于 `mss` 抓取主屏，返回 `PIL.Image`。`get_screen_for_turn()` 先按 `vision_max_longer_side` 缩放（压缩尺寸、省 token），再按 `vision_save_enabled` / `vision_save_dir` 将截图写入 `data/vision/`（文件名 `screenshot_YYYYMMDD_HHMMSS.jpg` 或 `.png`），最后返回图像供主脑多模态。**心跳检测**：`check_heartbeat()` 截取当前屏、与上一帧 64×64 灰度缩略图做像素差异比，超过 `vision_heartbeat_diff_threshold` 则返回 `(True, 当前帧)`，调度器据此注入一条系统提示（「画面发生了你感兴趣的变化…」）并带该截图执行一轮，实现主动说话。配置：`vision_heartbeat_enabled`、`vision_heartbeat_interval_sec`（如 30）、`vision_heartbeat_diff_threshold`（如 0.03）。
 
 
 
@@ -182,8 +182,8 @@ VedalAI_Project/
 * **实现细节**：Mem0 检索 → 截屏（vision）→ 主脑流式；历史读写 `config.chat_history_file`（默认 `data/chat_history.json`）。空输入表示「继续说话」，与 orchestrator 行为一致。
 
 * **`server.py` (FastAPI)**
-* **核心职责**：暴露 HTTP API，供前端调用。
-* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式。`message` 可为空表示继续说话。详见 `docs/web.md`。
+* **核心职责**：暴露 HTTP API，供前端调用；**Web 模式含眼睛心跳**与统一日志。
+* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式。`message` 可为空表示继续说话。启动时（lifespan）根据 config 启动后台心跳任务：每 N 秒调用 `vision.check_heartbeat()`，有变化则执行一轮主动说话并写入历史（与 CLI 共用 `chat_history_store`）；日志写入 config 的 `log_dir`/`log_file`（默认 `logs/vedalai.log`），与 CLI 同文件。详见 `docs/web.md`。
 
 
 

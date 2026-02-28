@@ -5,7 +5,7 @@
 """
 import asyncio
 
-from src.core.logger import get_logger
+from src.core.logger import get_logger, get_log_path
 from src.core.orchestrator import Orchestrator
 
 logger = get_logger(__name__)
@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 
 def main() -> None:
     """启动调度器主循环。"""
-    logger.info("数字生命 MVP 启动中...")
+    logger.info("数字生命 MVP 启动中...（CLI 模式，日志: %s）", get_log_path())
     try:
         orch = Orchestrator()
         asyncio.run(orch.run())

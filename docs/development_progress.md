@@ -28,7 +28,7 @@
 ### 4. 感官层
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| vision | ✅ | capture_screen() + get_screen_for_turn()（config：vision_enabled、vision_max_longer_side）；**已接入** orchestrator，每轮截屏以 vision_image 传入主脑多模态 |
+| vision | ✅ | capture_screen() + get_screen_for_turn()；**心跳检测**：每 N 秒（如 30）截图与上一帧缩略图对比，差异超阈值则触发主动说话（check_heartbeat）；已接入 orchestrator 队列 |
 | hearing | ⏳ 占位 | 无 VAD、录音、Whisper |
 
 ### 5. 表达层
@@ -48,8 +48,8 @@
 ### 7. Web 模块 — ✅ 已完成
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py FastAPI：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync；空输入=继续说话 |
-| webapp | ✅ | Vite + React + TypeScript + Tailwind + shadcn/ui 风格；深色主题、输入框贴底、空输入可发送；format-content.ts 解析心理/说的话/场景、反引号高亮 |
+| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py FastAPI：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync；**Web 模式眼睛心跳**（后台每 N 秒检测，有变化则主动说话并写入历史）；**日志**写入 logs/vedalai.log（与 CLI 同） |
+| webapp | ✅ | Vite + React + TypeScript + Tailwind + shadcn/ui 风格；深色主题、输入框贴底、空输入可发送；format-content.ts 解析心理/说的话/场景、反引号高亮；轮询 /api/history 可见心跳触发的主动消息 |
 | scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
 
 ---
@@ -70,9 +70,9 @@
 - **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；将 RMS/音量数据提供给 body 用于计算口型参数。
 - **orchestrator**：主脑流式输出不再直接 `print`，改为接入 `mouth.consume_text_stream(stream)`（或等价接口）。
 
-### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图）
-- **vision**：`get_screen_for_turn()` 按 config 截屏、缩放、可选存 `data/vision/`。
-- **orchestrator**：每轮取截图传入主脑；**直接回车**也执行一轮（继续说话）。
+### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图 + 心跳检测）
+- **vision**：`get_screen_for_turn()` 按 config 截屏、缩放、可选存 `data/vision/`；**心跳检测**：`check_heartbeat()` 每 N 秒（config `vision_heartbeat_interval_sec`，如 30）截图与上一帧 64×64 灰度缩略图对比，差异超过 `vision_heartbeat_diff_threshold` 则返回当前帧，供调度器触发主动说话。
+- **orchestrator**：每轮取截图传入主脑；**直接回车**也执行一轮（继续说话）；后台心跳任务每 N 秒检测，有变化则向队列注入「画面发生了你感兴趣的变化…」回合并带当前截图执行一轮。
 - **prompt_assembler**：§6 在 `vision_image_attached` 时插入「本回合附屏幕截图…」说明；**所有提示词仅在此组装**，conscious 不注入。
 - **conscious**：仅发送组装好的 current_user_content + 可选 vision_image。
 

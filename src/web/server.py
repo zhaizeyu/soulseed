@@ -1,8 +1,11 @@
 """
 FastAPI 对话 API — 与 main.py 调度器解耦，仅依赖 ConversationService。
 提供流式 SSE 与可选非流式接口；CORS 开放供前端调用。
+Web 模式含眼睛心跳：后台定时截图对比，有变化则自动执行一轮主动说话并写入历史（前端轮询 /api/history 可见）。
 """
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -10,14 +13,84 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from src.web.service import ConversationService
+from src.core.config_loader import get_config
+from src.core.logger import get_logger, get_log_path
+from src.web.service import ConversationService, HEARTBEAT_PROACTIVE_PROMPT
 from src.brain import memory as memory_module
 from src.brain.chat_history_store import load_history
+from src.senses import vision as vision_module
+
+logger = get_logger(__name__)
+
+_heartbeat_task: asyncio.Task | None = None
+
+
+async def _heartbeat_loop() -> None:
+    """Web 模式后台任务：每 N 秒心跳检测，有变化则执行主动回合并写入历史。"""
+    config = get_config()
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            interval = max(1, int(config.get("vision_heartbeat_interval_sec", 30)))
+        except (TypeError, ValueError):
+            interval = 30
+        await asyncio.sleep(interval)
+        if not config.get("vision_heartbeat_enabled", False):
+            continue
+        try:
+            triggered, image = await loop.run_in_executor(None, vision_module.check_heartbeat)
+            if not triggered or image is None:
+                continue
+            logger.info("[Web] 心跳触发主动说话，开始本轮生成")
+            service = get_service()
+            full_reply: list[str] = []
+            try:
+                async for chunk in service.run_one_turn(HEARTBEAT_PROACTIVE_PROMPT, vision_image_override=image):
+                    full_reply.append(chunk)
+            except Exception as e:
+                logger.exception("[Web] 心跳回合主脑异常: %s", e)
+                full_reply.append(f"[错误: {e}]")
+            reply_text = "".join(full_reply).strip()
+            service.commit_turn(HEARTBEAT_PROACTIVE_PROMPT, reply_text)
+            if reply_text:
+                await memory_module.add_background(None, reply_text)
+            logger.info("[Web] 心跳主动回合已写入历史")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning("Web 心跳检测异常: %s", e, exc_info=True)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """启动时打日志并启动心跳任务；关闭时取消任务。"""
+    global _heartbeat_task
+    config = get_config()
+    log_path = get_log_path()
+    logger.info("Web 模式启动（日志: %s）", log_path)
+    hb_enabled = config.get("vision_heartbeat_enabled", False)
+    hb_interval = config.get("vision_heartbeat_interval_sec", 30)
+    if hb_enabled:
+        logger.info("眼睛心跳: 已开启，每 %s 秒检测画面变化，有变化则主动说话并写入历史（前端轮询 /api/history 可见）", hb_interval)
+        _heartbeat_task = asyncio.create_task(_heartbeat_loop())
+    else:
+        logger.info("眼睛心跳: 未开启 (vision_heartbeat_enabled=false)")
+    yield
+    if _heartbeat_task is not None:
+        _heartbeat_task.cancel()
+        try:
+            await _heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        _heartbeat_task = None
+    logger.info("Web 模式已停止")
+
 
 app = FastAPI(
     title="VedalAI Chat API",
     description="数字生命对话接口，与 CLI 调度器解耦",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

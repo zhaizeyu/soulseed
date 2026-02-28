@@ -45,6 +45,13 @@ except Exception:
 _file_handler: logging.FileHandler | None = None
 
 
+class _FlushFileHandler(logging.FileHandler):
+    """写入后立即 flush，便于在 logs/vedalai.log 中实时看到新内容。"""
+    def emit(self, record: logging.LogRecord) -> None:
+        super().emit(record)
+        self.flush()
+
+
 def _get_log_path() -> Path:
     """从 config 解析日志文件路径（log_dir + log_file），未配置则用默认。"""
     global _LOG_FILE
@@ -71,8 +78,9 @@ def _ensure_file_handler() -> logging.FileHandler:
         return _file_handler
     log_path = _get_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    _file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    _file_handler = _FlushFileHandler(log_path, encoding="utf-8")
     _file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"))
+    _file_handler.setLevel(logging.INFO)
     return _file_handler
 
 
