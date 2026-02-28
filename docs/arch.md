@@ -4,7 +4,7 @@
 
 ```text
 VedalAI_Project/
-├── .env                    # [机密] 存放 API Keys (GEMINI_API_KEY, OPENAI_API_KEY, VTS_PORT)
+├── .env                    # [机密] 存放 API Keys (GEMINI_API_KEY, OPENAI_API_KEY)
 ├── config.yaml             # [配置] 全局参数 (主脑/记忆/日志/感官/表达)
 ├── main.py                 # [入口] 程序启动总入口
 ├── requirements.txt        # Python 依赖库列表
@@ -41,8 +41,8 @@ VedalAI_Project/
 │   ├── sounds/             # 预置音效 (如"思考中"提示音)
 │   └── temp/               # [临时] 存放 TTS 实时生成的音频切片 (自动轮转清理)
 │
-├── webapp/                 # [前端] Vite + React，打字输入、流式展示；见 docs/web.md
-│   ├── src/
+├── webapp/                 # [前端] Vite + React，Cubism Web SDK 加载 Live2D 模型；见 docs/web.md
+│   ├── src/                # 聊天 UI + Live2D 画布，接收后端参数驱动模型
 │   └── package.json
 │
 └── src/                    # [源代码核心层]
@@ -71,7 +71,7 @@ VedalAI_Project/
     │   ├── __init__.py
     │   ├── mouth.py        # [发声器官] 文本流接收与 TTS 语音合成
     │   ├── player.py       # [播放器] 异步音频播放队列控制及硬件打断机制
-    │   └── body.py         # [物理表征] VTube Studio 协议封装，控制口型同步与面部表情
+    │   └── body.py         # [身体参数] 计算 Live2D 控制参数（口型、表情等），通过 Web API/WebSocket 推送给前端
     │
     ├── web/                # === Web 模块 (与 main 解耦) ===
     │   ├── __init__.py
@@ -98,14 +98,14 @@ VedalAI_Project/
 1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
 2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0**）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。
 3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮。
-4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`。
+4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`；`body` 计算参数并推送给 Web 前端以驱动 Live2D。
 
 
 * **`config_loader.py`**
 * **核心职责**：单例模式的配置加载器。将 `config.yaml` 的业务配置和 `.env` 的机密凭证合并为一个全局可访问的配置对象。
 
 * **配置项摘要（config.yaml + .env）**
-  * **.env**：`GEMINI_API_KEY`（主脑与 Mem0 共用）、`OPENAI_API_KEY`、`VTS_PORT`。
+  * **.env**：`GEMINI_API_KEY`（主脑与 Mem0 共用）、`OPENAI_API_KEY`。
   * **主脑**：`gemini_model`。
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
@@ -166,12 +166,12 @@ VedalAI_Project/
 
 * **`player.py` (播放器)**
 * **核心职责**：音频的物理输出与状态同步。
-* **实现细节**：后台常驻的音频消费队列。播放音频时向 `body.py` 广播状态和音量数据；播放完毕后清理 `assets/temp/` 下的缓存文件。对外暴露 `interrupt()` 方法以支持瞬间闭嘴。
+* **实现细节**：后台常驻的音频消费队列。播放音频时向 `body.py` 提供 RMS/音量等数据供其计算口型参数；播放完毕后清理 `assets/temp/` 下的缓存文件。对外暴露 `interrupt()` 方法以支持瞬间闭嘴。
 
 
-* **`body.py` (物理表征 - VTS 接口)**
-* **核心职责**：驱动 Live2D 皮套动作。
-* **实现细节**：基于 `pyvts` 建立与 VTube Studio 的 WebSocket 连接。接收 `player.py` 计算出的音频 RMS（响度），将其映射为 VTS 中的 `MouthOpen` 参数以实现精准唇形同步（Lip-sync）。同时正则匹配主脑输出文本中的情感标签（如 `*laughs*`），触发预设的面部表情热键。
+* **`body.py` (身体参数计算与推送)**
+* **核心职责**：计算 Live2D 控制参数（口型、表情等），并推送给 Web 前端，由前端驱动模型。
+* **实现细节**：接收 `player.py` 的音频 RMS（响度）等，计算口型开合等参数；解析主脑输出中的情感标签（如 `*laughs*`）得到表情 ID。通过 Web API（如 SSE/WebSocket 或 REST）将参数流推送给已连接的前端。**不在本机运行 VTube Studio**；Live2D 模型在浏览器端由 **Cubism Web SDK** 加载与渲染，前端仅接收后端下发的参数并驱动 SDK 更新模型状态。
 
 
 
@@ -189,7 +189,7 @@ VedalAI_Project/
 
 ### F. 前端 (webapp/)
 
-* **技术栈**：Vite + React + TypeScript + Tailwind + shadcn/ui 风格 + Lucide + TanStack Query + Framer Motion。
+* **技术栈**：Vite + React + TypeScript + Tailwind + shadcn/ui 风格 + Lucide + TanStack Query + Framer Motion；**Live2D 使用 Cubism Web SDK 官方 SDK** 在浏览器中加载与渲染模型。
 * **UI 与渲染**：
   * **配色**：深色主题（背景 `#0f1117`），顶栏 VedalAI | Terminal，绿色状态点、Secure/Online。
   * **输入框**：固定在底部（`shrink-0`），贴底通栏；**空输入也可发送**（继续说话）。
@@ -199,3 +199,6 @@ VedalAI_Project/
     * 其余 → 场景描写（白色）
     * 单引号 `'...'` 不视为说的话
   * **反引号**：`` `code` `` 使用蓝色高亮（`text-indigo-300` + `bg-white/[0.05]`）。
+* **Live2D（身体展示）**：
+  * **加载与渲染**：使用 **Cubism Web SDK** 官方方式在 Web 端加载 `.moc3` / `.model3.json` 等 Live2D 模型并渲染到 Canvas；模型资源可放在 `webapp/public/` 或通过配置指定 CDN/路径。
+  * **驱动方式**：前端不计算口型/表情，仅接收后端（`body.py` + Web API）下发的参数（如口型开合度、表情 ID、视线等），按帧或按事件更新 Cubism 模型参数，实现口型同步与表情切换。后端负责根据音频 RMS、主脑文本情感标签等计算并推送这些参数。

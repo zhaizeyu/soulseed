@@ -36,7 +36,7 @@
 |------|------|------|
 | mouth | ⏳ 占位 | 未按句 TTS、未入队 |
 | player | ⏳ 占位 | 无播放队列、interrupt、RMS 送 body |
-| body | ⏳ 占位 | 无 pyvts、口型、表情 |
+| body | ⏳ 占位 | 后端计算口型/表情参数并推送给 Web 前端；前端用 Cubism Web SDK 渲染 Live2D |
 
 ### 6. 工具与资源
 | 模块 | 状态 | 说明 |
@@ -67,7 +67,7 @@
 
 ### 阶段 4：嘴 + 播放器（语音输出）
 - **mouth.py**：消费主脑文本流，按句切分，调用 Edge-TTS / FishAudio 等生成音频，路径入队。
-- **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；可选将 RMS 推给 body。
+- **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；将 RMS/音量数据提供给 body 用于计算口型参数。
 - **orchestrator**：主脑流式输出不再直接 `print`，改为接入 `mouth.consume_text_stream(stream)`（或等价接口）。
 
 ### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图）
@@ -76,16 +76,17 @@
 - **prompt_assembler**：§6 在 `vision_image_attached` 时插入「本回合附屏幕截图…」说明；**所有提示词仅在此组装**，conscious 不注入。
 - **conscious**：仅发送组装好的 current_user_content + 可选 vision_image。
 
-### 阶段 6：身体（VTube Studio）
-- **body.py**：pyvts 连接 VTS，接收 player 的 RMS/音量，映射 MouthOpen；主脑输出情感标签触发表情热键。
-- **orchestrator**：播放时把音量/RMS 推给 body；可选在 conscious 输出里解析情感标签并通知 body。
+### 阶段 6：身体（Cubism Web SDK + 后端参数）
+- **前端 (webapp)**：使用 **Cubism Web SDK** 官方 SDK 在浏览器中加载、渲染 Live2D 模型（.moc3 / .model3.json）；通过 WebSocket 或 SSE 接收后端下发的参数，驱动口型、表情、视线等，不在前端计算参数。
+- **body.py（后端）**：根据 player 的 RMS/音量计算口型开合等参数；解析主脑输出中的情感标签（如 `*laughs*`）得到表情 ID；通过 Web API（SSE/WebSocket 或 REST）将参数流推送给已连接的前端。
+- **orchestrator**：播放时把 RMS 等数据交给 body；可选在 conscious 输出里解析情感标签并通知 body。不依赖 VTube Studio，全部在 Web 端展示。
 
 ### 阶段 7：工具箱与主脑增强
 - **tools_registry.py**：实现若干工具（如 search_web、execute_code），带类型与 docstring，转为 Gemini Function Calling 格式。
 - **conscious**：将 tools 注册到 Gemini，开启自动调用；按需做 io_utils 的图片压缩（如先压缩再送 API）。
 
 ### 阶段 8：调度整合与稳定性
-- 用 **asyncio.gather** 同时跑：语音监听、视觉定时采样、主脑流式、TTS 入队、播放、VTS 更新。
+- 用 **asyncio.gather** 同时跑：语音监听、视觉定时采样、主脑流式、TTS 入队、播放、body 参数计算并推送到 Web 前端。
 - 统一**插嘴**逻辑：新语音触发时 interrupt + 重新组 prompt 并请求主脑。
 - 错误重试、超时、日志标签（如 [AUDIO]、[VISION]）完善；可选 api_client 统一 HTTP。
 
@@ -105,7 +106,7 @@
 2. **阶段 4（嘴 + 播放器）** — 先实现「文字→语音播放」与 interrupt，再接耳朵更自然。  
 3. **阶段 3（耳朵）** — 语音输入替代打字，并与阶段 4 的 interrupt 联动。  
 4. **阶段 5（眼睛接入）** — 为多模态/环境感知打基础。  
-5. **阶段 6（身体）** — 口型与表情，依赖阶段 4 的播放与音量。  
+5. **阶段 6（身体）** — 前端 Cubism Web SDK 渲染 Live2D，后端 body 计算口型/表情参数并推送；依赖阶段 4 的播放与音量。  
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
