@@ -28,6 +28,8 @@ VedalAI_Project/
 │       └── migrations_qdrant/  # Qdrant 内部迁移目录，勿手动修改
 │
 ├── scripts/                # [脚本]
+│   ├── start_web.sh        # 一键启动 Web 后端 + 前端（8765 + 5173）
+│   ├── stop_web.sh         # 一键停止后端与前端（按端口清理）
 │   └── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆 (需先退出主程序)
 │
 ├── assets/                 # [资源文件]
@@ -186,7 +188,7 @@ VedalAI_Project/
 
 * **`server.py` (FastAPI)**
 * **核心职责**：暴露 HTTP API，供前端调用；**Web 模式含眼睛心跳**与统一日志。
-* **实现细节**：`GET /api/history` 返回对话历史；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式；`POST /api/speech-to-text` 接收上传音频，调 `hearing.speech_to_text`（Gemini 转写）返回识别文本，与主脑共用 `GEMINI_API_KEY`。启动时（lifespan）根据 config 启动后台心跳任务；日志写入 config 的 `log_dir`/`log_file`。详见 `docs/web.md`。
+* **实现细节**：`GET /api/history` 返回对话历史；`GET /api/config` 返回前端配置（如 `tts_reply_enabled`）；`POST /api/chat` SSE 流式；`POST /api/chat/sync` 非流式；`POST /api/speech-to-text` 语音转文本（Gemini）；`POST /api/tts` 文本转语音（Edge-TTS）。启动时（lifespan）根据 config 启动后台心跳任务；日志写入 config 的 `log_dir`/`log_file`。详见 `docs/web.md`。
 
 
 

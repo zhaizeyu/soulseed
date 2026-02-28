@@ -48,8 +48,8 @@
 ### 7. Web 模块 — ✅ 已完成
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py：GET /api/history、POST /api/chat（SSE）、POST /api/chat/sync、**POST /api/speech-to-text**（语音转文本）；Web 心跳 + 日志见上 |
-| webapp | ✅ | 深色主题、输入框贴底、空输入可发送；**输入框左侧麦克风**：点击录音→停止后上传 STT，结果追加到输入框；format-content 心理/说的话/场景、反引号高亮；轮询 /api/history |
+| src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py：GET /api/history、GET /api/config、POST /api/chat（SSE）、POST /api/chat/sync、POST /api/speech-to-text、**POST /api/tts**（TTS）；Web 心跳 + 日志 |
+| webapp | ✅ | 深色主题、输入框贴底、空输入可发送；麦克风语音输入；流式结束后按 **tts_reply_enabled** 自动播报「说的话」；format-content 心理/说的话/场景、反引号高亮；轮询 /api/history |
 | scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
 
 ---
@@ -112,4 +112,4 @@
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
-当前可运行链路：**模拟输入（直接回车=继续说话）→ Mem0 检索（空 query 不调）→ 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入**；耳朵/嘴/播放器/身体未接入。
+当前可运行链路：**CLI**：模拟输入（直接回车=继续说话）→ Mem0 检索 → 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入。**Web**：打字/语音输入 → 同上流式 → 历史 + 记忆；助手回复中的「说的话」在 `tts_reply_enabled=true` 时自动 TTS 播报。耳朵（STT）/嘴巴（TTS）已在 Web 端接入；player/body 未接入。
