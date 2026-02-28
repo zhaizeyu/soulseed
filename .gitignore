@@ -17,6 +17,9 @@ build/
 assets/temp/*
 !assets/temp/.gitkeep
 
+# Web 起停脚本产生的 PID 文件
+.web.pids
+
 # 历史对话（可选：若不想提交对话记录可保留此项）
 data/
 

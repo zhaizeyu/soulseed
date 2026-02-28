@@ -28,5 +28,9 @@ google-genai>=1.0.0
 # VTube Studio
 # pyvts
 
+# Web (FastAPI，与 main 解耦)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
 # 日志与工具
 colorlog>=6.8.0

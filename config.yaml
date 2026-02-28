@@ -35,6 +35,11 @@ tts_voice: "zh-CN-XiaoxiaoNeural"
 # VAD 灵敏度 (0~1，越高越容易触发录音)
 vad_sensitivity: 0.5
 
+# Web API（与 main 解耦，独立启动）
+web_host: "0.0.0.0"
+web_port: 8765
+web_reload: false
+
 # VTube Studio
 vts_host: "127.0.0.1"
 vts_port: 8001

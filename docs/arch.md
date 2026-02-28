@@ -41,6 +41,10 @@ VedalAI_Project/
 │   ├── sounds/             # 预置音效 (如"思考中"提示音)
 │   └── temp/               # [临时] 存放 TTS 实时生成的音频切片 (自动轮转清理)
 │
+├── webapp/                 # [前端] Vite + React，打字输入、流式展示；见 docs/web.md
+│   ├── src/
+│   └── package.json
+│
 └── src/                    # [源代码核心层]
     ├── __init__.py
     │
@@ -68,6 +72,12 @@ VedalAI_Project/
     │   ├── mouth.py        # [发声器官] 文本流接收与 TTS 语音合成
     │   ├── player.py       # [播放器] 异步音频播放队列控制及硬件打断机制
     │   └── body.py         # [物理表征] VTube Studio 协议封装，控制口型同步与面部表情
+    │
+    ├── web/                # === Web 模块 (与 main 解耦) ===
+    │   ├── __init__.py
+    │   ├── service.py      # [对话服务] 单轮对话封装，历史与 CLI 共用 chat_history_store（唯一数据源）
+    │   ├── server.py       # [FastAPI] POST /api/chat 流式、/api/chat/sync 非流式
+    │   └── __main__.py     # 入口: python -m src.web
     │
     └── utils/              # === 通用工具库 ===
         ├── __init__.py

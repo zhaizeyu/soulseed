@@ -20,6 +20,15 @@
 6. **眼睛**：默认每轮截屏并作为多模态输入传给主脑（Gemini 可见当前屏幕）。会先按 `vision_max_longer_side` 缩放再发送（省 token），并可选将截图存到 `data/vision/`（`vision_save_enabled`、`vision_save_dir`、`vision_save_format`、`vision_jpeg_quality`）。设 `vision_enabled: false` 可关闭截屏。
 7. 运行期日志写入 `logs/vedalai.log`（可在 `config.yaml` 中配置 `log_dir` / `log_file`）。
 
+## Web 对话（与 CLI 解耦）
+
+Web 模块独立于 `main.py` 调度器，通过 FastAPI 暴露对话 API，前端用 React 打字输入、流式展示回复。
+
+1. **一键起停**：在项目根执行 `./scripts/start_web.sh` 启动后端与前端，`./scripts/stop_web.sh` 停止。首次需先 `cd webapp && npm install`。
+2. **分别启动**：后端 `python -m src.web`（默认 `http://0.0.0.0:8765`）；前端 `cd webapp && npm run dev`（Vite 默认 `http://localhost:5173`）。可在 `config.yaml` 配置 `web_host` / `web_port`。
+3. **接口**：`GET /api/history` 读历史；`POST /api/chat` 流式对话；`POST /api/chat/sync` 非流式。历史与 CLI 共用唯一数据源（config `chat_history_file`，默认 `data/chat_history.json`）。
+4. 详见 [docs/web.md](docs/web.md)。
+
 ## 开发与扩展
 
 - **人设与 System Instruction**：编辑 `assets/personas/vedal_main.json`
