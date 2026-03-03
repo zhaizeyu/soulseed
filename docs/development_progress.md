@@ -22,7 +22,7 @@
 ### 3. 调度与主循环（第一步闭环 + 记忆）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| orchestrator | ✅ 部分 | 模拟输入（**直接回车也执行一轮，继续说话**）→ memory.search（空 query 不调 Mem0）→ 截屏 → 主脑流式 → 控制台；每轮后 await add_background；未接 hearing/mouth/player/body |
+| orchestrator | ✅ 部分 | 模拟输入（**直接回车也执行一轮，继续说话**）→ memory.search（空 query 不调 Mem0）→ 截屏 → 主脑流式 → 控制台；每轮后 await add_background；CLI 端未接 hearing/player/body（嘴巴 TTS 已在 Web 端独立实现） |
 | main.py | ✅ | 入口，asyncio 跑 orchestrator.run() |
 
 ### 4. 感官层
@@ -34,8 +34,8 @@
 ### 5. 表达层
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| mouth | ✅ 部分 | Edge-TTS：`text_to_speech_async` 返回 mp3；Web 端 POST /api/tts，前端流式结束后自动播报「说的话」 |
-| player | ⏳ 占位 | 无播放队列、interrupt、RMS 送 body |
+| mouth | ✅ | 嘴巴（TTS）已可用：Edge-TTS 合成，Web 端 `tts_reply_enabled` 开启后流式结束自动播报「说的话」；CLI 端未接、未与 player 联动 |
+| player | ⏳ 占位 | 无播放队列、interrupt、RMS 送 body（与 mouth 联动后用于 CLI 端播放与口型） |
 | body | ⏳ 占位 | 后端计算口型/表情参数并推送给 Web 前端；前端用 Cubism Web SDK 渲染 Live2D |
 
 ### 6. 工具与资源
@@ -67,10 +67,11 @@
 - **Web 前端**：输入框旁麦克风按钮，点击录音、再点击停止并上传音频，识别结果追加到输入框。
 - **CLI（可选）**：VAD + 本地录音后调 `speech_to_text`，orchestrator 用语音替代 `input()`；插嘴时 `player.interrupt()`。
 
-### 阶段 4：嘴 + 播放器（语音输出）
-- **mouth.py**：消费主脑文本流，按句切分，调用 Edge-TTS / FishAudio 等生成音频，路径入队。
-- **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；将 RMS/音量数据提供给 body 用于计算口型参数。
-- **orchestrator**：主脑流式输出不再直接 `print`，改为接入 `mouth.consume_text_stream(stream)`（或等价接口）。
+### 阶段 4：CLI 端嘴 + 播放器（与 orchestrator 联动）
+- **说明**：Web 端语音回复（mouth + 前端播报）已完成；本阶段指 **CLI** 端主脑流式输出经 mouth 合成后由 player 播放，并支持插嘴打断。
+- **mouth.py**：在现有 TTS 基础上，消费主脑文本流、按句切分并生成音频入队（或复用现有接口由 player 拉取）。
+- **player.py**：异步消费队列、播放音频、播放完清理 `assets/temp/`；暴露 `interrupt()`；将 RMS/音量数据提供给 body 用于口型。
+- **orchestrator**：主脑流式输出不再仅 `print`，改为接入 mouth/player 链路。
 
 ### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图 + 心跳检测）
 - **vision**：`get_screen_for_turn()` 按 config 截屏、缩放、可选存 `data/vision/`；**心跳检测**：`check_heartbeat()` 每 N 秒（config `vision_heartbeat_interval_sec`，如 30）截图与上一帧 64×64 灰度缩略图对比，差异超过 `vision_heartbeat_diff_threshold` 则返回当前帧，供调度器触发主动说话。
@@ -112,4 +113,4 @@
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
-当前可运行链路：**CLI**：模拟输入（直接回车=继续说话）→ Mem0 检索 → 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入。**Web**：打字/语音输入 → 同上流式 → 历史 + 记忆；助手回复中的「说的话」在 `tts_reply_enabled=true` 时自动 TTS 播报。耳朵（STT）/嘴巴（TTS）已在 Web 端接入；player/body 未接入。
+当前可运行链路：**CLI**：模拟输入（直接回车=继续说话）→ Mem0 检索 → 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入。**Web**：打字/语音输入 → 同上流式 → 历史 + 记忆；`tts_reply_enabled=true` 时助手「说的话」自动 TTS 播报（嘴巴已接入）。耳朵（STT）/嘴巴（TTS）在 Web 端均已接入；player/body 未接入（仅影响 CLI 端播放与 Live2D 口型驱动）。
