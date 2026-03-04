@@ -4,6 +4,9 @@
 用法：先退出主程序，再在项目根目录执行：
   python scripts/inspect_mem0_vectors.py
   或  .venv/bin/python scripts/inspect_mem0_vectors.py
+
+注意：memory.py 中 Qdrant 的 config 必须设置 on_disk=True，否则 mem0 会在每次
+初始化时清空向量库目录，导致记忆被删光。
 """
 import sys
 from pathlib import Path
@@ -60,6 +63,7 @@ def main():
         with_payload=True,
         with_vectors=False,
     )
+    print(f"向量库路径: {vector_path}")
     print(f"共 {len(points)} 条记忆\n")
     for i, point in enumerate(points, 1):
         payload = point.payload or {}

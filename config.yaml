@@ -24,7 +24,7 @@ mem0_infer: true                               # true=只存 LLM 抽取的事实
 # mem0_vector_store_path: "data/mem0/qdrant"  # 可选，默认 data/mem0/qdrant
 
 # 眼睛（屏幕截取与多模态）
-vision_enabled: true          # 是否每轮截屏并传入主脑
+vision_enabled: false          # 是否每轮截屏并传入主脑
 vision_interval: 2.0              # 秒（后续定时刷新用）
 vision_max_longer_side: 1024      # 截图较长边上限（先缩放再送主脑，省 token）
 vision_save_enabled: true         # 是否将每轮截图存到 data 目录
@@ -40,7 +40,7 @@ vision_heartbeat_diff_threshold: 0.03  # 视为「有变化」的差异阈值 (0
 # TTS 音色 (依所用引擎填写，如 Edge-TTS 的 voice 名)
 tts_voice: "zh-CN-XiaoxiaoNeural"
 # 是否开启语音回复：助手回复中的「说的话」在流式结束后自动 TTS 播报（Web 前端）
-tts_reply_enabled: true
+tts_reply_enabled: false
 
 # VAD 灵敏度 (0~1，越高越容易触发录音)
 vad_sensitivity: 0.5

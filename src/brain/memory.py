@@ -71,6 +71,7 @@ def _get_memory():
             "config": {
                 "path": vector_path,
                 "embedding_model_dims": embedding_dims,
+                "on_disk": True,  # 必须 True：否则 mem0 会在每次初始化时 rmtree(path) 清空已有数据
             },
         },
     }
