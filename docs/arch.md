@@ -14,6 +14,7 @@ VedalAI_Project/
 ├── docs/                   # [文档] 架构与提示词说明
 │   ├── arch.md             # 本架构设计文档
 │   ├── development_progress.md  # 开发阶段与进度
+│   ├── telegram.md         # Telegram 对接功能与架构设计 (python-telegram-bot)
 │   ├── prompt.md           # 提示词组装顺序说明
 │   ├── prompt.json         # 组装示例/参考
 │   └── assembled_prompt.json # 命令行组装输出 (python -m src.brain.prompt_assembler)
@@ -21,6 +22,7 @@ VedalAI_Project/
 ├── data/                   # [运行时数据]
 │   ├── chat_history.json   # 历史对话持久化 (条数见 config chat_history_max_entries)
 │   ├── vision/             # 每轮截图 (screenshot_*.jpg/png)，见 config vision_save_*
+│   ├── telegram/           # [可选] Telegram 按会话历史 (chats/{chat_id}.json)
 │   └── mem0/               # 长期记忆 (Mem0)：需配置 GEMINI_API_KEY 后使用
 │       ├── config.json     # Mem0 库内部配置
 │       ├── history.db      # 记忆元数据 (SQLite)
@@ -65,6 +67,7 @@ VedalAI_Project/
     │
     ├── brain/              # === 大脑层 (认知与决策) ===
     │   ├── __init__.py
+    │   ├── turn_input.py   # [统一输入] UserTurnInput(text/images/audio_path/metadata)，多端扩展不改签名
     │   ├── conscious.py    # [主脑] 封装 Gemini API，处理多模态上下文、对话会话管理
     │   ├── prompt_assembler.py # [提示词组装] §1–§8 全在此组装，主脑不注入；§6 截图说明/耳朵，§7 无输入时「继续说话」
     │   ├── chat_history_store.py # [历史对话] JSON 持久化，每次加载最近 N 条
@@ -83,6 +86,14 @@ VedalAI_Project/
     │   ├── server.py       # [FastAPI] POST /api/chat 流式、/api/chat/sync 非流式
     │   └── __main__.py     # 入口: python -m src.web
     │
+    ├── telegram/           # === Telegram 模块 (与 main 解耦，可选) ===
+    │   ├── __init__.py
+    │   ├── bot.py          # PTB Application、polling/webhook 启动
+    │   ├── handlers.py     # /start、/help、/clear、文本消息处理
+    │   ├── service.py      # 按 chat_id 的单轮对话（历史 + 主脑 + Mem0 user_id 隔离）
+    │   ├── history.py      # 按 chat_id 的会话历史持久化 (data/telegram/chats/)
+    │   └── __main__.py     # 入口: python -m src.telegram
+    │
     └── utils/              # === 通用工具库 ===
         ├── __init__.py
         ├── api_client.py   # 统一的底层异步 HTTP 请求封装 (带重试机制)
@@ -99,9 +110,9 @@ VedalAI_Project/
 * **`orchestrator.py` (调度器)**
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
 * **当前执行逻辑（第一步闭环 + 长期记忆）**：
-1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
-2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**List[Dict]**，含 memory/metadata/score；用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., mem0_lines=_mem0_lines, ...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒（如 30 秒）调用 `vision.check_heartbeat()`，当前帧与上一帧缩略图对比，差异超过阈值则向队列注入一条「画面发生了你感兴趣的变化…」回合，带当前截图触发主脑主动说话。
-3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text, metadata=...)` 写入长期记忆后再进入下一轮（metadata 可接入情绪识别等，当前可传 None）。
+1. 加载 `config`、历史对话（`chat_history_store`）。
+2. 每轮：将本回合入参封装为 **`UserTurnInput`**（text + 可选 images）；用 `turn_input.effective_text()` 做 `memory.search(..., user_id="default")` 得到 mem0 结果，取 `turn_input.images[0]` 作为 vision；调用 `conscious.chat_stream(..., mem0_lines=..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒调用 `vision.check_heartbeat()`，有变化则向队列注入「画面发生了你感兴趣的变化…」回合，带当前截图执行一轮。
+3. 每轮结束：用 `turn_input.effective_text()` 与回复追加 user/assistant；**等待** `memory.add_background(..., user_id="default")` 写入长期记忆后再进入下一轮（metadata 可接入情绪识别，当前可传 None）。
 4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`；`body` 计算参数并推送给 Web 前端以驱动 Live2D。
 
 
@@ -111,7 +122,7 @@ VedalAI_Project/
 * **配置项摘要（config.yaml + .env）**
   * **.env**：`GEMINI_API_KEY`（主脑、Mem0、语音转写 STT 均用此 Key，全为 Google 系列）。
   * **调试**：`debug_log_prompt`（true=每次请求前将组装好的完整提示词打印到日志）。
-  * **主脑**：`gemini_model`。
+  * **主脑**：`gemini_model`；`gemini_max_output_tokens`（单轮回复最大 token 数，默认 8192，过小易触发输出截断）。
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
   * **长期记忆 (Mem0)**：`mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`（true=只存抽取事实，false=存原文）、可选 `mem0_vector_store_path`。
   * **日志**：`log_dir`、`log_file`。
@@ -139,13 +150,17 @@ VedalAI_Project/
 
 ### C. 大脑层 (`src/brain/`)
 
+* **`turn_input.py` (统一用户回合输入)**
+* **核心职责**：将单轮用户输入抽象为 **`UserTurnInput`**（`text`、`images`、`audio_path`、`metadata`），供 CLI/Web/Telegram 等统一使用；后续扩展图片/语音/文件时只需往该结构填字段，无需改各端调用签名。
+* **实现细节**：`effective_text()` 返回供检索与主脑使用的文本（当前即 `text`，后续可合并语音转写）。Web/Orchestrator 在每轮先将入参构造成 `UserTurnInput`，再从其中取 `effective_text()` 与首图调用 memory + conscious。
+
 * **`prompt_assembler.py` (提示词组装)**
 * **核心职责**：**所有面向模型的提示词仅在此组装**（主脑不再注入）。按 prompt.md §1–§8 顺序：Jailbreak → 角色卡 → 示例 → Mem0 → 历史 → §6 环境感知 → §7 用户当前回合 → Task。
-* **实现细节**：**§4 潜意识记忆**：`mem0_lines` 为 `List[Dict]`，每项含 `memory`（正文）与可选 `metadata`。若存在 `user_emotion`/`ai_emotion`/`time_context`/`importance`，会组装成带前缀（如「(深夜) [你当时很开心，我当时很傲娇] 」）与后缀（重要度≥8 时追加「这是我铭记于心的重要记忆」）的段落再注入，便于主脑理解记忆的「温度」。§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
+* **实现细节**：**§4 潜意识记忆**：`mem0_lines` 为 `List[Dict]`，每项含 `memory`（正文）与可选 `metadata`。若有 `timestamp`/`time_context` 会组装成可读时间前缀（如「(3月7日 夜晚)」）；若有 `user_emotion`/`ai_emotion`/`importance` 会加情绪前缀与「重要记忆」后缀，便于主脑理解记忆的「温度」。§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
 
 * **`conscious.py` (主脑 - Gemini 核心)**
 * **核心职责**：按 prompt_assembler 组装好的消息调用 Gemini 流式生成，**不在此注入任何提示词**。
-* **实现细节**：调用 `build_messages(...)`（含 `vision_image_attached`）得到消息列表，转为 Gemini Content 后，本回合发送内容为「组装好的 current_user_content + 可选 vision_image」；无 system_instruction，全部按顺序进 history。模型名等来自 `config.yaml`。
+* **实现细节**：调用 `build_messages(...)`（含 `vision_image_attached`）得到消息列表，转为 Gemini Content 后，本回合发送内容为「组装好的 current_user_content + 可选 vision_image」；无 system_instruction，全部按顺序进 history。模型名、`gemini_max_output_tokens`（单轮输出上限，避免截断）等来自 `config.yaml`。
 
 * **`tools_registry.py` (原生工具箱)**
 * **核心职责**：提供供 Gemini 自动调用的扩展能力。
@@ -156,8 +171,8 @@ VedalAI_Project/
 * **核心职责**：维护长期记忆与人格一致性；支持**记忆元数据**（情绪锚点、重要度、时间、类型）以区分「有温度」的记忆。
 * **实现细节**：
   * 封装 Mem0，**全部使用 Google Gemini**：嵌入模型 `mem0_embedder_model`、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（默认 `data/mem0/qdrant`）。数据目录 `MEM0_DIR=data/mem0`。
-  * **`search(query, top_k)`**：按语义检索相关记忆，返回 `List[Dict]`，每项含 `memory`（正文）、`metadata`（元数据）、`score`（相似度）。**query 为空时直接返回 []**，不调用 Mem0（避免 Gemini 报 400）。
-  * **`add_background(user_input, reply_text, metadata=None)`**：每轮结束后写入记忆。**metadata** 可选包含：`user_emotion`、`ai_emotion`（情绪锚点）、`importance`（1–10 重要度）、`memory_type`（preference/event/relationship）等；写入时自动附加 `timestamp`（ISO 8601）与 `time_context`（如「清晨」「深夜」）。由 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant 抽事实；`false` 或 user 为空时存助手回复原文。事实抽取若遇非法 JSON 会降级存原文。
+  * **`search(query, top_k, user_id=None)`**：按语义检索相关记忆，返回 `List[Dict]`，每项含 `memory`、`metadata`、`score`。**user_id** 用于多端/多用户隔离（不传则 `"default"`）；query 为空时返回 []，不调 Mem0。
+  * **`add_background(user_input, reply_text, metadata=None, user_id=None)`**：每轮结束后写入记忆。**user_id** 同上；**metadata** 可选含 `user_emotion`、`ai_emotion`、`importance`、`memory_type` 等，写入时自动附加 `timestamp` 与 `time_context`。由 **`mem0_infer`** 控制：`true` 时抽事实，`false` 或 user 为空时存原文；非法 JSON 时降级存原文。
   * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级。
   * 查看已存记忆及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`（会打印每条记忆的 Metadata 如 time_context、importance 等）。
 
@@ -185,7 +200,7 @@ VedalAI_Project/
 
 * **`service.py` (对话服务)**
 * **核心职责**：封装单轮对话逻辑，与 CLI 共用 `chat_history_store`（唯一数据源）。
-* **实现细节**：Mem0 检索 → 截屏（vision）→ 主脑流式；历史读写 `config.chat_history_file`（默认 `data/chat_history.json`）。空输入表示「继续说话」，与 orchestrator 行为一致。
+* **实现细节**：入参在内部封装为 **`UserTurnInput`**（text + 可选 images）；用 `turn_input.effective_text()` 与首图做 Mem0 检索 → 截屏或 override 图 → 主脑流式；历史读写 `config.chat_history_file`。空输入表示「继续说话」，与 orchestrator 行为一致。
 
 * **`server.py` (FastAPI)**
 * **核心职责**：暴露 HTTP API，供前端调用；**Web 模式含眼睛心跳**与统一日志。
@@ -208,3 +223,10 @@ VedalAI_Project/
 * **Live2D（身体展示）**：
   * **加载与渲染**：使用 **Cubism Web SDK** 官方方式在 Web 端加载 `.moc3` / `.model3.json` 等 Live2D 模型并渲染到 Canvas；模型资源可放在 `webapp/public/` 或通过配置指定 CDN/路径。
   * **驱动方式**：前端不计算口型/表情，仅接收后端（`body.py` + Web API）下发的参数（如口型开合度、表情 ID、视线等），按帧或按事件更新 Cubism 模型参数，实现口型同步与表情切换。后端负责根据音频 RMS、主脑文本情感标签等计算并推送这些参数。
+
+### G. Telegram 模块 (`src/telegram/`，可选)
+
+* **设计文档**：详见 **`docs/telegram.md`**。
+* **核心职责**：基于 **python-telegram-bot** 对接 Telegram，使数字生命在 Telegram 中与用户对话；与 CLI/Web 解耦，**按 chat_id 隔离会话历史与 Mem0 user_id**。
+* **模块组成**：`bot.py`（PTB Application、polling/webhook）；`handlers.py`（/start、/help、/clear、文本消息）；`service.py`（按 chat_id 调用主脑与记忆）；`history.py`（按 chat_id 持久化历史至 `data/telegram/chats/`）。
+* **运行方式**：独立入口 `python -m src.telegram`；需配置 `.env` 中 `TELEGRAM_BOT_TOKEN` 及 `config.yaml` 中 `telegram_enabled`。

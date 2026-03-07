@@ -10,6 +10,7 @@ from src.core.config_loader import get_config
 from src.core.logger import get_logger
 from src.brain import conscious
 from src.brain import memory as memory_module
+from src.brain.turn_input import UserTurnInput
 from src.brain.chat_history_store import load_history, append_turns
 from src.senses import vision as vision_module
 
@@ -42,29 +43,29 @@ class ConversationService:
         vision_image_override: Any = None,
     ) -> AsyncIterator[str]:
         """
-        执行一轮：Mem0 检索 → 截屏（或使用 vision_image_override）→ 主脑流式生成；yield 文本片段。
+        执行一轮：Mem0 检索 → 截屏（或 vision_image_override）→ 主脑流式；yield 文本片段。
+        入参在内部封装为 UserTurnInput，便于后续扩展图片/语音等不改签名。
         调用方在迭代结束后需调用 commit_turn(user_input, full_reply) 写入历史与记忆。
-        vision_image_override 非空时用于心跳触发的主动回合，不再本回合截屏。
         """
-        query = (user_input or "").strip()
+        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
+        turn_input = UserTurnInput(text=user_input or "", images=[vision_image] if vision_image is not None else None)
+        query = turn_input.effective_text()
         try:
             limit = max(1, int(self._config.get("mem0_search_limit", 5)))
             mem0_lines = await memory_module.search(query, top_k=limit)
         except Exception as e:
             logger.debug("Mem0 检索跳过: %s", e)
             mem0_lines = []
-
-        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
+        vision_image_use = turn_input.images[0] if turn_input.images else None
         use_defaults = len(self._chat_history) == 0
-
         async for chunk in conscious.chat_stream(
-            current_user_input=user_input,
+            current_user_input=turn_input.effective_text(),
             persona_name="vedal_main",
             user_info=None,
             mem0_lines=mem0_lines or None,
             chat_history=self._chat_history,
             vision_audio_text=None,
-            vision_image=vision_image,
+            vision_image=vision_image_use,
             use_defaults_for_missing=use_defaults,
         ):
             yield chunk

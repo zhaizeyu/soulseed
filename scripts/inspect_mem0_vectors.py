@@ -79,9 +79,15 @@ def main():
         other_fields = {k: v for k, v in payload.items() if k not in ("memory", "data", "text", "user_id", "created_at", "updated_at", "metadata")}
         if metadata or other_fields:
             combined_meta = {**metadata, **other_fields}
-            meta_str = ", ".join(f"{k}={v}" for k, v in combined_meta.items() if k != "timestamp")
-            if meta_str:
-                print(f"Metadata: {meta_str}")
+            # 全部展示；timestamp 过长时只显示前 19 字符（日期+时间）
+            parts = []
+            for k, v in combined_meta.items():
+                if k == "timestamp" and isinstance(v, str) and len(v) > 19:
+                    parts.append(f"timestamp={v[:19]}…")
+                else:
+                    parts.append(f"{k}={v}")
+            if parts:
+                print("Metadata: " + ", ".join(parts))
         
         if memory_text:
             print(memory_text[:300] + ("..." if len(memory_text) > 300 else ""))

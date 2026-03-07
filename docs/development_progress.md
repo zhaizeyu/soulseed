@@ -13,16 +13,17 @@
 ### 2. 大脑层（主脑 + 提示词 + 历史）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| prompt_assembler | ✅ | §1–§8 全在此组装，主脑不注入；§6 截图/耳朵，§7 无输入时「继续说话」占位；vision_audio_text 占位 |
-| conscious | ✅ | 仅把组装好的 current_user_content + 可选 vision_image 送 Gemini 流式，不注入任何提示词 |
+| turn_input | ✅ | UserTurnInput(text/images/audio_path/metadata)，单轮用户输入统一对象；Web/Orchestrator 先封装再调 memory + conscious，后续扩展不改签名 |
+| prompt_assembler | ✅ | §1–§8 全在此组装，主脑不注入；§4 记忆带 timestamp/time_context/情绪/重要度格式化；§6 截图/耳朵，§7 无输入时「继续说话」占位 |
+| conscious | ✅ | 组装好的 current_user_content + 可选 vision_image 送 Gemini 流式；config 支持 gemini_max_output_tokens 控制输出长度 |
 | chat_history_store | ✅ | JSON 持久化、每次加载最近 N 条、配置化路径与条数 |
-| memory | ✅ | Mem0：Gemini embedder+LLM，Qdrant；search 返回 List[Dict]（memory/metadata/score），query 空时返回 []；add_background 支持 metadata（情绪、重要度、时间、类型），自动附加 timestamp/time_context；mem0_infer 可配置；inspect_mem0_vectors.py 可查看元数据 |
+| memory | ✅ | Mem0：search/add_background 支持 user_id 多端隔离；metadata（情绪、重要度等）+ timestamp/time_context；inspect_mem0_vectors.py 可查看完整元数据 |
 | tools_registry | ⏳ 占位 | 未实现业务工具，未接入 conscious |
 
 ### 3. 调度与主循环（第一步闭环 + 记忆）
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| orchestrator | ✅ 部分 | 模拟输入（**直接回车也执行一轮，继续说话**）→ memory.search（空 query 不调 Mem0）→ 截屏 → 主脑流式 → 控制台；每轮后 await add_background；CLI 端未接 hearing/player/body（嘴巴 TTS 已在 Web 端独立实现） |
+| orchestrator | ✅ 部分 | 每轮封装 **UserTurnInput** → memory.search(user_id=default) + 截屏/首图 → conscious 流式 → 控制台；每轮后 append 历史、await add_background；CLI 端未接 hearing/player/body（嘴巴 TTS 已在 Web 端独立实现） |
 | main.py | ✅ | 入口，asyncio 跑 orchestrator.run() |
 
 ### 4. 感官层
@@ -58,7 +59,7 @@
 
 ### 阶段 2：记忆（Mem0）— ✅ 已完成
 - **memory.py**：已集成 Mem0，embedder 与 LLM 均用 **Google Gemini**；实现 `search(query, top_k)` 返回 `List[Dict]`（含 memory、metadata、score）、`add_background(user_input, reply_text, metadata=None)`；支持**记忆元数据**（user_emotion、ai_emotion、importance、memory_type 等），写入时自动附加 timestamp、time_context；缺 key 或缺库时降级。
-- **orchestrator / web**：每轮前 `_mem0_lines = await memory.search(用户输入)` 传入主脑；每轮后 `await memory.add_background(..., metadata=...)` 并等待落盘（metadata 可接入情绪识别，当前可传 None）。
+- **orchestrator / web**：每轮将入参封装为 **UserTurnInput**，用 `effective_text()` 做 memory.search、首图做 vision，再调 conscious；每轮后 `add_background(..., user_id=...)` 并等待落盘（metadata 可接入情绪识别，当前可传 None）。
 - **prompt_assembler**：§4 潜意识记忆接收带 metadata 的 mem0_lines，按情绪/时间/重要度格式化后注入（带温度前缀与「重要记忆」后缀）。
 - **config.yaml**：已增加 `mem0_*` 等项。数据目录为 `data/mem0/`（含 history.db、qdrant/）。查看向量库及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
 

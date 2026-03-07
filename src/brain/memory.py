@@ -94,18 +94,25 @@ def _get_memory():
         return None
 
 
-async def search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-    """根据 query 检索相关长期记忆片段。返回包含 memory 和 metadata 的字典列表。"""
+async def search(
+    query: str,
+    top_k: int = 5,
+    user_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """根据 query 检索相关长期记忆片段。返回包含 memory 和 metadata 的字典列表。
+    user_id: 会话标识，用于多端/多用户隔离；不传则使用默认（与现有 CLI/Web 一致）。
+    """
     memory = _get_memory()
     if memory is None or not (query or "").strip():
         return []
+    uid = (user_id or "").strip() or _DEFAULT_USER_ID
     limit = max(1, min(top_k, 100))
     loop = asyncio.get_event_loop()
 
     def _search() -> List[Dict[str, Any]]:
         result = memory.search(
             query,
-            user_id=_DEFAULT_USER_ID,
+            user_id=uid,
             limit=limit,
         )
         items = result.get("results") or []
@@ -130,15 +137,21 @@ async def add_background(
     user_input: str | None,
     reply_text: str,
     metadata: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> None:
     """对话结束后写入长期记忆。未启用 Mem0 时静默跳过。
     user_input: 本轮用户输入（mem0_infer=true 时与 reply 一起送 LLM 抽事实）
     reply_text: 本轮助手回复。
-    metadata: 包含情绪、权重、时间戳等元数据。
+    metadata: 可选，会与内置的 timestamp/time_context 合并后写入 Mem0。传入例如
+              {"user_emotion": "开心", "ai_emotion": "傲娇", "importance": 7, "memory_type": "event"}
+              后，inspect 脚本可见、prompt_assembler 会用于注入「有温度」的记忆。当前
+              orchestrator/server 多传 None，故仅存 timestamp 与 time_context。
+    user_id: 会话标识，用于多端/多用户隔离；不传则使用默认（与现有 CLI/Web 一致）。
     """
     memory = _get_memory()
     if memory is None or not (reply_text or "").strip():
         return
+    uid = (user_id or "").strip() or _DEFAULT_USER_ID
     cfg = get_config()
     infer = cfg.get("mem0_infer", True)
     if isinstance(infer, str):
@@ -162,19 +175,19 @@ async def add_background(
                 {"role": "assistant", "content": reply_text.strip()},
             ]
             try:
-                memory.add(messages, user_id=_DEFAULT_USER_ID, metadata=final_metadata, infer=True)
+                memory.add(messages, user_id=uid, metadata=final_metadata, infer=True)
             except Exception as e:
                 logger.debug("事实抽取失败，改为存原文: %s", e)
                 memory.add(
                     [{"role": "assistant", "content": reply_text.strip()}],
-                    user_id=_DEFAULT_USER_ID,
+                    user_id=uid,
                     metadata=final_metadata,
                     infer=False,
                 )
         else:
             memory.add(
                 [{"role": "assistant", "content": reply_text.strip()}],
-                user_id=_DEFAULT_USER_ID,
+                user_id=uid,
                 metadata=final_metadata,
                 infer=False,
             )

@@ -13,6 +13,7 @@ debug_log_prompt: false
 
 # 主脑 (Gemini)
 gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp
+gemini_max_output_tokens: 8192         # 单轮回复最大 token 数，过小会导致输出被截断并触发「无有效 Part」告警
 
 # 长期记忆 (Mem0，全用 Gemini)
 mem0_embedder_model: "gemini-embedding-001"   # 嵌入模型

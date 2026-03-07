@@ -121,8 +121,15 @@ async def chat_stream(
         model_name = f"models/{model_name}"
 
     try:
+        max_output_tokens = 8192
+        if config.get("gemini_max_output_tokens") is not None:
+            try:
+                max_output_tokens = max(256, min(65536, int(config.get("gemini_max_output_tokens"))))
+            except (TypeError, ValueError):
+                pass
+        generation_config = genai.GenerationConfig(max_output_tokens=max_output_tokens)
         # 不设 system_instruction，全部按顺序放在 history 中
-        model = genai.GenerativeModel(model_name=model_name)
+        model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
         chat = model.start_chat(history=history_contents)
         # 本回合发送内容：仅组装好的用户文字 + 可选截图（§7 保证必有 user，不会为空）
         user_message: Any = current_user_content
@@ -134,8 +141,10 @@ async def chat_stream(
                 if chunk.text:
                     yield chunk.text
             except (ValueError, AttributeError):
-                # 无有效 Part：Gemini 触发了安全/引用等过滤，流在此结束，后续不再有 chunk，故输出会截断
-                logger.warning("[主脑] 流式返回无有效 Part，输出已截断（多为安全/引用过滤，见 https://ai.google.dev/api/generate-content#finishreason）")
+                # 无有效 Part：可能是安全/引用过滤，或达到 max_output_tokens 上限导致流结束
+                logger.warning(
+                    "[主脑] 流式返回无有效 Part，输出已截断（可能原因：安全/引用过滤，或回复过长触及 gemini_max_output_tokens 上限，可适当提高 config 中 gemini_max_output_tokens）"
+                )
                 pass
     except Exception as e:
         logger.exception("Gemini 流式调用异常: %s", e)

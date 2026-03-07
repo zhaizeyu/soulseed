@@ -165,15 +165,25 @@ def build_messages(
             meta = item.get("metadata", {})
 
         if line:
-            # 💡 记忆有温度：根据元数据组装带情感的记忆片段
+            # 💡 记忆有温度：根据元数据组装带情感与时间的记忆片段
             user_emo = meta.get("user_emotion") if meta else None
             ai_emo = meta.get("ai_emotion") if meta else None
             time_ctx = meta.get("time_context") if meta else None
+            timestamp = meta.get("timestamp") if meta else None  # ISO 8601，可选注入给大脑
             importance = meta.get("importance") if meta else None
-            
+
             prefix = ""
-            if time_ctx:
-                prefix += f"({time_ctx}) "
+            if timestamp or time_ctx:
+                # 优先用可读时间：若有 timestamp 则转为简短日期（如 3月7日 夜晚），否则仅相对时间
+                time_part = time_ctx or ""
+                if timestamp:
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                        time_part = f"{dt.month}月{dt.day}日" + (f" {time_ctx}" if time_ctx else "")
+                    except (ValueError, TypeError):
+                        time_part = time_part or timestamp[:10]
+                prefix += f"({time_part}) "
             if user_emo or ai_emo:
                 emo_str = []
                 if user_emo: emo_str.append(f"你当时很{user_emo}")

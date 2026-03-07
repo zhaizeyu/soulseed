@@ -12,6 +12,7 @@ from src.core.logger import get_logger
 from src.brain import conscious
 from src.brain.chat_history_store import load_history, append_turns
 from src.brain import memory as memory_module
+from src.brain.turn_input import UserTurnInput
 from src.senses import vision as vision_module
 
 logger = get_logger(__name__)
@@ -28,8 +29,6 @@ class Orchestrator:
         self._config = get_config()
         # 历史对话（仅 user/assistant），从 JSON 加载最近 N 条，每轮追加后写回
         self._chat_history: list[dict[str, str]] = load_history()
-        # Mem0 检索结果（含 metadata）
-        self._mem0_lines: list[dict[str, Any]] = []
 
     async def _get_user_input(self) -> str:
         """模拟用户输入：在 executor 中读 stdin，不阻塞事件循环。"""
@@ -50,26 +49,26 @@ class Orchestrator:
         user_input: str,
         vision_image_override: Any = None,
     ) -> None:
-        """执行一轮：主脑流式生成，打印并写入历史。vision_image_override 非空时替代本回合截图（用于心跳触发）。"""
-        # 每轮开始前：从 Mem0 检索相关长期记忆
+        """执行一轮：主脑流式生成，打印并写入历史。入参封装为 UserTurnInput 便于后续扩展。"""
+        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
+        turn_input = UserTurnInput(text=user_input or "", images=[vision_image] if vision_image is not None else None)
         try:
             limit = max(1, int(self._config.get("mem0_search_limit", 5)))
-            self._mem0_lines = await memory_module.search(user_input.strip(), top_k=limit)
+            mem0_lines = await memory_module.search(turn_input.effective_text(), top_k=limit)
         except Exception as e:
             logger.debug("Mem0 检索跳过: %s", e)
-            self._mem0_lines = []
-        vision_audio = await self._get_vision_audio_text()
-        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
+            mem0_lines = []
+        vision_image_use = turn_input.images[0] if turn_input.images else None
         full_reply: list[str] = []
         try:
             async for chunk in conscious.chat_stream(
-                current_user_input=user_input,
+                current_user_input=turn_input.effective_text(),
                 persona_name="vedal_main",
                 user_info=None,
-                mem0_lines=self._mem0_lines or None,
+                mem0_lines=mem0_lines or None,
                 chat_history=self._chat_history,
-                vision_audio_text=vision_audio or None,
-                vision_image=vision_image,
+                vision_audio_text=None,
+                vision_image=vision_image_use,
                 use_defaults_for_missing=(len(self._chat_history) == 0),
             ):
                 full_reply.append(chunk)
@@ -79,29 +78,22 @@ class Orchestrator:
             logger.exception("主脑本轮异常: %s", e)
             full_reply.append(f"[错误: {e}]")
         reply_text = "".join(full_reply).strip()
+        user_text = turn_input.effective_text()
         new_turns: list[dict[str, str]] = []
-        if (user_input or "").strip():
-            self._chat_history.append({"role": "user", "content": user_input.strip()})
-            new_turns.append({"role": "user", "content": user_input.strip()})
+        if user_text:
+            self._chat_history.append({"role": "user", "content": user_text})
+            new_turns.append({"role": "user", "content": user_text})
         self._chat_history.append({"role": "assistant", "content": reply_text})
         new_turns.append({"role": "assistant", "content": reply_text})
         append_turns(new_turns)
-        # 保持内存中仅最近 N 条（与 config chat_history_max_entries 一致）
         try:
             max_entries = max(1, int(self._config.get("chat_history_max_entries", 20)))
         except (TypeError, ValueError):
             max_entries = 20
         if len(self._chat_history) > max_entries:
             self._chat_history = self._chat_history[-max_entries:]
-        # 每轮结束后：写入长期记忆并等待完成，避免 Ctrl+C 退出时未落盘
         if reply_text:
-            # 💡 情绪锚点与权重：此处可接入情绪分析模型，目前先留出 metadata 接口
-            # 示例：metadata = {"user_emotion": "喜悦", "importance": 5}
-            await memory_module.add_background(
-                user_input.strip() if user_input else None,
-                reply_text,
-                metadata=None  # 待后续接入真实情绪识别
-            )
+            await memory_module.add_background(user_text or None, reply_text, metadata=None, user_id="default")
 
     async def _heartbeat_loop(self, queue: asyncio.Queue) -> None:
         """后台任务：每 N 秒执行一次心跳检测，有变化则向队列注入触发。"""
