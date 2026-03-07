@@ -16,7 +16,7 @@
 | prompt_assembler | ✅ | §1–§8 全在此组装，主脑不注入；§6 截图/耳朵，§7 无输入时「继续说话」占位；vision_audio_text 占位 |
 | conscious | ✅ | 仅把组装好的 current_user_content + 可选 vision_image 送 Gemini 流式，不注入任何提示词 |
 | chat_history_store | ✅ | JSON 持久化、每次加载最近 N 条、配置化路径与条数 |
-| memory | ✅ | Mem0：Gemini embedder+LLM，Qdrant；search 在 query 空时直接返回 []（避免 400）；add_background 已接；mem0_infer 可配置；Invalid JSON 日志已过滤 |
+| memory | ✅ | Mem0：Gemini embedder+LLM，Qdrant；search 返回 List[Dict]（memory/metadata/score），query 空时返回 []；add_background 支持 metadata（情绪、重要度、时间、类型），自动附加 timestamp/time_context；mem0_infer 可配置；inspect_mem0_vectors.py 可查看元数据 |
 | tools_registry | ⏳ 占位 | 未实现业务工具，未接入 conscious |
 
 ### 3. 调度与主循环（第一步闭环 + 记忆）
@@ -49,7 +49,7 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py：GET /api/history、GET /api/config、POST /api/chat（SSE）、POST /api/chat/sync、POST /api/speech-to-text、**POST /api/tts**（TTS）；Web 心跳 + 日志 |
-| webapp | ✅ | 深色主题、输入框贴底、空输入可发送；麦克风语音输入；流式结束后按 **tts_reply_enabled** 自动播报「说的话」；format-content 心理/说的话/场景、反引号高亮；轮询 /api/history |
+| webapp | ✅ | 深色主题、输入框贴底、空输入可发送；麦克风语音输入；流式结束后按 **tts_reply_enabled** 自动播报「说的话」；format-content 心理/说的话/场景、反引号高亮；**双引号内字数少于 5 按场景文字渲染**；轮询 /api/history |
 | scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
 
 ---
@@ -57,9 +57,10 @@
 ## 二、后续开发阶段建议
 
 ### 阶段 2：记忆（Mem0）— ✅ 已完成
-- **memory.py**：已集成 Mem0，embedder 与 LLM 均用 **Google Gemini**；实现 `search(query, top_k)`、`add_background(user_input, reply_text)`；缺 key 或缺库时降级。
-- **orchestrator**：每轮前 `_mem0_lines = await memory.search(用户输入)` 传入主脑；每轮后 `await memory.add_background(user_input, reply_text)` 并等待落盘。
-- **config.yaml**：已增加 `mem0_embedder_model`、`mem0_llm_model`、`mem0_search_limit`、`mem0_embedding_dims`、`mem0_llm_temperature`、`mem0_infer`、可选 `mem0_vector_store_path`。数据目录为 `data/mem0/`（含 history.db、qdrant/）。查看向量库内容：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
+- **memory.py**：已集成 Mem0，embedder 与 LLM 均用 **Google Gemini**；实现 `search(query, top_k)` 返回 `List[Dict]`（含 memory、metadata、score）、`add_background(user_input, reply_text, metadata=None)`；支持**记忆元数据**（user_emotion、ai_emotion、importance、memory_type 等），写入时自动附加 timestamp、time_context；缺 key 或缺库时降级。
+- **orchestrator / web**：每轮前 `_mem0_lines = await memory.search(用户输入)` 传入主脑；每轮后 `await memory.add_background(..., metadata=...)` 并等待落盘（metadata 可接入情绪识别，当前可传 None）。
+- **prompt_assembler**：§4 潜意识记忆接收带 metadata 的 mem0_lines，按情绪/时间/重要度格式化后注入（带温度前缀与「重要记忆」后缀）。
+- **config.yaml**：已增加 `mem0_*` 等项。数据目录为 `data/mem0/`（含 history.db、qdrant/）。查看向量库及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
 
 ### 阶段 3：耳朵（语音输入）— ✅ Web 已接
 - **hearing.py**：`speech_to_text(audio_bytes, filename)` 使用 **Google Gemini** 多模态做语音转写，供 Web `POST /api/speech-to-text` 使用；与主脑共用 GEMINI_API_KEY 与 gemini_model，未配置时跳过并打日志。

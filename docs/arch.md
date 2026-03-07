@@ -30,7 +30,7 @@ VedalAI_Project/
 ├── scripts/                # [脚本]
 │   ├── start_web.sh        # 一键启动 Web 后端 + 前端（8765 + 5173）
 │   ├── stop_web.sh         # 一键停止后端与前端（按端口清理）
-│   └── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆 (需先退出主程序)
+│   └── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆及元数据 (需先退出主程序)
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
@@ -100,8 +100,8 @@ VedalAI_Project/
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
 * **当前执行逻辑（第一步闭环 + 长期记忆）**：
 1. 加载 `config`、历史对话（`chat_history_store`）与 Mem0 检索结果占位。
-2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0**）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒（如 30 秒）调用 `vision.check_heartbeat()`，当前帧与上一帧缩略图对比，差异超过阈值则向队列注入一条「画面发生了你感兴趣的变化…」回合，带当前截图触发主脑主动说话。
-3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text)` 写入长期记忆后再进入下一轮。
+2. 每轮：先 `await memory.search(当前用户输入)` 得到 `_mem0_lines`（**List[Dict]**，含 memory/metadata/score；用户直接回车时 query 为空，search 直接返回 [] 不调 Mem0）；再在 executor 中取 `vision.get_screen_for_turn()` 得到本回合截图（可选）；调用 `conscious.chat_stream(..., mem0_lines=_mem0_lines, ...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒（如 30 秒）调用 `vision.check_heartbeat()`，当前帧与上一帧缩略图对比，差异超过阈值则向队列注入一条「画面发生了你感兴趣的变化…」回合，带当前截图触发主脑主动说话。
+3. 每轮结束：有用户输入则追加 user 与 assistant，否则只追加 assistant；**等待** `memory.add_background(user_input, reply_text, metadata=...)` 写入长期记忆后再进入下一轮（metadata 可接入情绪识别等，当前可传 None）。
 4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`；`body` 计算参数并推送给 Web 前端以驱动 Live2D。
 
 
@@ -141,7 +141,7 @@ VedalAI_Project/
 
 * **`prompt_assembler.py` (提示词组装)**
 * **核心职责**：**所有面向模型的提示词仅在此组装**（主脑不再注入）。按 prompt.md §1–§8 顺序：Jailbreak → 角色卡 → 示例 → Mem0 → 历史 → §6 环境感知 → §7 用户当前回合 → Task。
-* **实现细节**：§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入（截图说明或耳朵摘要）；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
+* **实现细节**：**§4 潜意识记忆**：`mem0_lines` 为 `List[Dict]`，每项含 `memory`（正文）与可选 `metadata`。若存在 `user_emotion`/`ai_emotion`/`time_context`/`importance`，会组装成带前缀（如「(深夜) [你当时很开心，我当时很傲娇] 」）与后缀（重要度≥8 时追加「这是我铭记于心的重要记忆」）的段落再注入，便于主脑理解记忆的「温度」。§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
 
 * **`conscious.py` (主脑 - Gemini 核心)**
 * **核心职责**：按 prompt_assembler 组装好的消息调用 Gemini 流式生成，**不在此注入任何提示词**。
@@ -153,12 +153,13 @@ VedalAI_Project/
 
 
 * **`memory.py` (海马体 - Mem0)**
-* **核心职责**：维护长期记忆与人格一致性。
+* **核心职责**：维护长期记忆与人格一致性；支持**记忆元数据**（情绪锚点、重要度、时间、类型）以区分「有温度」的记忆。
 * **实现细节**：
   * 封装 Mem0，**全部使用 Google Gemini**：嵌入模型 `mem0_embedder_model`、记忆抽取用 LLM `mem0_llm_model`，向量库为本地 Qdrant（默认 `data/mem0/qdrant`）。数据目录 `MEM0_DIR=data/mem0`。
-  * **`search(query, top_k)`**：按语义检索相关记忆；**query 为空时直接返回 []**，不调用 Mem0（避免 Gemini 报 400）。
-  * **`add_background(user_input, reply_text)`**：每轮结束后写入记忆。由 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant 抽事实；`false` 或 user 为空时存助手回复原文。事实抽取若遇非法 JSON 会降级存原文；Mem0 的 Invalid JSON 日志已过滤不刷控制台。
+  * **`search(query, top_k)`**：按语义检索相关记忆，返回 `List[Dict]`，每项含 `memory`（正文）、`metadata`（元数据）、`score`（相似度）。**query 为空时直接返回 []**，不调用 Mem0（避免 Gemini 报 400）。
+  * **`add_background(user_input, reply_text, metadata=None)`**：每轮结束后写入记忆。**metadata** 可选包含：`user_emotion`、`ai_emotion`（情绪锚点）、`importance`（1–10 重要度）、`memory_type`（preference/event/relationship）等；写入时自动附加 `timestamp`（ISO 8601）与 `time_context`（如「清晨」「深夜」）。由 **`mem0_infer`** 控制：`true` 时传入整轮 user+assistant 抽事实；`false` 或 user 为空时存助手回复原文。事实抽取若遇非法 JSON 会降级存原文。
   * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级。
+  * 查看已存记忆及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`（会打印每条记忆的 Metadata 如 time_context、importance 等）。
 
 
 
@@ -200,7 +201,7 @@ VedalAI_Project/
   * **输入框**：固定在底部（`shrink-0`），贴底通栏；**空输入也可发送**（继续说话）。
   * **消息渲染**：`webapp/src/lib/format-content.ts` 解析助手回复，按类型分段：
     * `(...)` / `（...）` → 心理想的（褐色斜体 `text-thought`）
-    * `"..."` / `「...」` / 弯双引号 `"..."` → 说的话（黄色 `text-speech`）
+    * `"..."` / `「...」` / 弯双引号 `"..."` → 说的话（黄色 `text-speech`）；**双引号内字数少于 5（去空格后）则按场景文字渲染**（白色），不按「说的话」高亮
     * 其余 → 场景描写（白色）
     * 单引号 `'...'` 不视为说的话
   * **反引号**：`` `code` `` 使用蓝色高亮（`text-indigo-300` + `bg-white/[0.05]`）。
