@@ -81,7 +81,7 @@ def build_messages(
     *,
     persona_name: str = "vedal_main",
     user_info: str | None = None,
-    mem0_lines: list[str] | None = None,
+    mem0_lines: list[dict[str, Any]] | None = None,
     chat_history: list[dict[str, str]] | None = None,
     vision_audio_text: str | None = None,
     vision_image_attached: bool = False,
@@ -95,7 +95,7 @@ def build_messages(
 
     - persona_name: 角色卡文件名（不含 .json），对应 assets/personas/
     - user_info: 用户身份描述，缺省则从 user_info.json 读取
-    - mem0_lines: Mem0 检索到的记忆片段列表，缺省则用 prompt_defaults 或空
+    - mem0_lines: Mem0 检索到的记忆片段列表（含 metadata），缺省则用 prompt_defaults 或空
     - chat_history: 历史对话 [{role, content}, ...]
     - vision_audio_text: 当前耳朵/环境摘要文本，有则插入 §6
     - vision_image_attached: 本回合是否附屏幕截图（有则 §6 插入「读取屏幕截图」说明，图片由调用方随用户消息多模态传入）
@@ -114,7 +114,9 @@ def build_messages(
         user_info = load_user_info()
     if mem0_lines is None and use_defaults_for_missing:
         defaults = load_prompt_defaults()
-        mem0_lines = defaults.get("mem0", []) or []
+        # 兼容旧版字符串列表
+        raw_mem0 = defaults.get("mem0", []) or []
+        mem0_lines = [{"memory": m} if isinstance(m, str) else m for m in raw_mem0]
     if mem0_lines is None:
         mem0_lines = []
     if chat_history is None and use_defaults_for_missing:
@@ -154,9 +156,40 @@ def build_messages(
 
     # 4. 潜意识记忆 (prompt.md §4)
     messages.append({"role": "system", "content": "[History Memory]"})
-    for line in mem0_lines:
-        if (line or "").strip():
-            messages.append({"role": "system", "content": line.strip()})
+    for item in mem0_lines:
+        if isinstance(item, str):
+            line = item.strip()
+            meta = {}
+        else:
+            line = str(item.get("memory", "")).strip()
+            meta = item.get("metadata", {})
+
+        if line:
+            # 💡 记忆有温度：根据元数据组装带情感的记忆片段
+            user_emo = meta.get("user_emotion") if meta else None
+            ai_emo = meta.get("ai_emotion") if meta else None
+            time_ctx = meta.get("time_context") if meta else None
+            importance = meta.get("importance") if meta else None
+            
+            prefix = ""
+            if time_ctx:
+                prefix += f"({time_ctx}) "
+            if user_emo or ai_emo:
+                emo_str = []
+                if user_emo: emo_str.append(f"你当时很{user_emo}")
+                if ai_emo: emo_str.append(f"我当时很{ai_emo}")
+                prefix += f"[{'，'.join(emo_str)}] "
+            
+            suffix = ""
+            if importance is not None:
+                try:
+                    if int(importance) >= 8:
+                        suffix = " (这是我铭记于心的重要记忆)"
+                except (ValueError, TypeError):
+                    pass
+                
+            formatted_line = f"{prefix}{line}{suffix}"
+            messages.append({"role": "system", "content": formatted_line})
 
     # 5. 历史对话 (prompt.md §5)
     messages.append({"role": "system", "content": "[Start Chat]"})

@@ -55,7 +55,12 @@ async def _heartbeat_loop() -> None:
             reply_text = "".join(full_reply).strip()
             service.commit_turn(HEARTBEAT_PROACTIVE_PROMPT, reply_text)
             if reply_text:
-                await memory_module.add_background(None, reply_text)
+                # 💡 情绪锚点与权重：此处可接入情绪分析模型，目前先留出 metadata 接口
+                await memory_module.add_background(
+                    None,
+                    reply_text,
+                    metadata={"memory_type": "event"}
+                )
             logger.info("[Web] 心跳主动回合已写入历史")
         except asyncio.CancelledError:
             break
@@ -140,7 +145,12 @@ async def _stream_reply(message: str) -> AsyncIterator[str]:
     reply_text = "".join(full_reply).strip()
     service.commit_turn(message, reply_text)
     if reply_text:
-        await memory_module.add_background(message.strip() or None, reply_text)
+        # 💡 情绪锚点与权重：此处可接入情绪分析模型，目前先留出 metadata 接口
+        await memory_module.add_background(
+            message.strip() or None,
+            reply_text,
+            metadata=None  # 待后续接入真实情绪识别
+        )
     yield _sse_line({"chunk": None, "done": True})
 
 
@@ -202,7 +212,12 @@ async def chat_sync(request: ChatRequest):
     reply_text = "".join(full_reply).strip()
     service.commit_turn(message, reply_text)
     if reply_text:
-        await memory_module.add_background(message.strip() or None, reply_text)
+        # 💡 情绪锚点与权重：此处可接入情绪分析模型，目前先留出 metadata 接口
+        await memory_module.add_background(
+            message.strip() or None,
+            reply_text,
+            metadata=None  # 待后续接入真实情绪识别
+        )
     return {"reply": reply_text}
 
 

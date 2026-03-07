@@ -5,13 +5,23 @@
 """
 import asyncio
 import os
+import time
+from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 from src.core.config_loader import get_config
 from src.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# 记忆元数据结构定义
+# user_emotion: 用户当时情绪 (e.g. "崩溃", "狂喜")
+# ai_emotion: AI 当时情绪 (e.g. "心疼", "傲娇")
+# importance: 重要度评分 (1-10)
+# timestamp: 绝对时间戳 (ISO 8601)
+# time_context: 相对时间标签 (e.g. "深夜", "周末")
+# memory_type: 记忆类型 (preference, event, relationship)
 
 # 在首次使用前设置 MEM0 数据目录到项目内，避免写入 ~/.mem0
 _project_root = Path(__file__).resolve().parents[2]
@@ -84,22 +94,30 @@ def _get_memory():
         return None
 
 
-async def search(query: str, top_k: int = 5) -> List[str]:
-    """根据 query 检索相关长期记忆片段。未启用 Mem0 或 query 为空时返回空列表。"""
+async def search(query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+    """根据 query 检索相关长期记忆片段。返回包含 memory 和 metadata 的字典列表。"""
     memory = _get_memory()
     if memory is None or not (query or "").strip():
         return []
     limit = max(1, min(top_k, 100))
     loop = asyncio.get_event_loop()
 
-    def _search() -> List[str]:
+    def _search() -> List[Dict[str, Any]]:
         result = memory.search(
             query,
             user_id=_DEFAULT_USER_ID,
             limit=limit,
         )
         items = result.get("results") or []
-        return [str(item.get("memory", "")).strip() for item in items if item.get("memory")]
+        # 返回完整信息，由调用方决定如何格式化
+        return [
+            {
+                "memory": str(item.get("memory", "")).strip(),
+                "metadata": item.get("metadata", {}),
+                "score": item.get("score", 0.0),
+            }
+            for item in items if item.get("memory")
+        ]
 
     try:
         return await loop.run_in_executor(None, _search)
@@ -108,10 +126,15 @@ async def search(query: str, top_k: int = 5) -> List[str]:
         return []
 
 
-async def add_background(user_input: str | None, reply_text: str) -> None:
+async def add_background(
+    user_input: str | None,
+    reply_text: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
     """对话结束后写入长期记忆。未启用 Mem0 时静默跳过。
     user_input: 本轮用户输入（mem0_infer=true 时与 reply 一起送 LLM 抽事实）
     reply_text: 本轮助手回复。
+    metadata: 包含情绪、权重、时间戳等元数据。
     """
     memory = _get_memory()
     if memory is None or not (reply_text or "").strip():
@@ -120,6 +143,15 @@ async def add_background(user_input: str | None, reply_text: str) -> None:
     infer = cfg.get("mem0_infer", True)
     if isinstance(infer, str):
         infer = infer not in ("false", "0", "no", "off")
+
+    # 准备元数据
+    final_metadata = {
+        "timestamp": datetime.now().isoformat(),
+        "time_context": _get_time_context(),
+    }
+    if metadata:
+        final_metadata.update(metadata)
+
     loop = asyncio.get_event_loop()
 
     def _add() -> None:
@@ -130,18 +162,20 @@ async def add_background(user_input: str | None, reply_text: str) -> None:
                 {"role": "assistant", "content": reply_text.strip()},
             ]
             try:
-                memory.add(messages, user_id=_DEFAULT_USER_ID, infer=True)
+                memory.add(messages, user_id=_DEFAULT_USER_ID, metadata=final_metadata, infer=True)
             except Exception as e:
                 logger.debug("事实抽取失败，改为存原文: %s", e)
                 memory.add(
                     [{"role": "assistant", "content": reply_text.strip()}],
                     user_id=_DEFAULT_USER_ID,
+                    metadata=final_metadata,
                     infer=False,
                 )
         else:
             memory.add(
                 [{"role": "assistant", "content": reply_text.strip()}],
                 user_id=_DEFAULT_USER_ID,
+                metadata=final_metadata,
                 infer=False,
             )
 
@@ -153,3 +187,18 @@ async def add_background(user_input: str | None, reply_text: str) -> None:
 
     # 等待写入完成再返回，避免 Ctrl+C 退出时写入未完成导致记忆丢失
     await loop.run_in_executor(None, _run)
+
+
+def _get_time_context() -> str:
+    """获取当前时间的相对标签。"""
+    hour = datetime.now().hour
+    if 5 <= hour < 11:
+        return "清晨"
+    elif 11 <= hour < 14:
+        return "中午"
+    elif 14 <= hour < 18:
+        return "下午"
+    elif 18 <= hour < 22:
+        return "夜晚"
+    else:
+        return "深夜"

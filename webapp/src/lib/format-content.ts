@@ -70,9 +70,13 @@ export function parseContentSegments(content: string): ContentSegment[] {
       });
       break;
     }
+    const innerText = content.slice(pos, closeIdx);
+    // 双引号内字数少于 5 则按场景文字渲染（不算「说的话」）
+    const isShortQuoted =
+      chosen.type === "speech" && innerText.replace(/\s/g, "").length < 5;
     segments.push({
-      type: chosen.type,
-      text: content.slice(pos, closeIdx),
+      type: isShortQuoted ? "narrative" : chosen.type,
+      text: innerText,
       open: chosen.open,
       close: chosen.close,
     });

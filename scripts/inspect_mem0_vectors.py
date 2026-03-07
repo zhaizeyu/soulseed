@@ -69,9 +69,20 @@ def main():
         payload = point.payload or {}
         # Mem0 写入时用 data 存正文，search 返回格式用 memory
         memory_text = payload.get("memory") or payload.get("data") or payload.get("text") or ""
+        metadata = payload.get("metadata") or {}
         user_id = payload.get("user_id", "")
-        created = payload.get("created_at") or payload.get("updated_at") or ""
+        created = payload.get("created_at") or payload.get("updated_at") or metadata.get("timestamp") or ""
+        
         print(f"--- [{i}] (user_id={user_id}) {created}")
+        
+        # 打印所有非 memory/data/text 的字段，以防元数据被扁平化存储
+        other_fields = {k: v for k, v in payload.items() if k not in ("memory", "data", "text", "user_id", "created_at", "updated_at", "metadata")}
+        if metadata or other_fields:
+            combined_meta = {**metadata, **other_fields}
+            meta_str = ", ".join(f"{k}={v}" for k, v in combined_meta.items() if k != "timestamp")
+            if meta_str:
+                print(f"Metadata: {meta_str}")
+        
         if memory_text:
             print(memory_text[:300] + ("..." if len(memory_text) > 300 else ""))
         else:

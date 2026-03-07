@@ -28,8 +28,8 @@ class Orchestrator:
         self._config = get_config()
         # 历史对话（仅 user/assistant），从 JSON 加载最近 N 条，每轮追加后写回
         self._chat_history: list[dict[str, str]] = load_history()
-        # Mem0 检索结果（占位，后续接 memory.search）
-        self._mem0_lines: list[str] = []
+        # Mem0 检索结果（含 metadata）
+        self._mem0_lines: list[dict[str, Any]] = []
 
     async def _get_user_input(self) -> str:
         """模拟用户输入：在 executor 中读 stdin，不阻塞事件循环。"""
@@ -95,7 +95,13 @@ class Orchestrator:
             self._chat_history = self._chat_history[-max_entries:]
         # 每轮结束后：写入长期记忆并等待完成，避免 Ctrl+C 退出时未落盘
         if reply_text:
-            await memory_module.add_background(user_input.strip() if user_input else None, reply_text)
+            # 💡 情绪锚点与权重：此处可接入情绪分析模型，目前先留出 metadata 接口
+            # 示例：metadata = {"user_emotion": "喜悦", "importance": 5}
+            await memory_module.add_background(
+                user_input.strip() if user_input else None,
+                reply_text,
+                metadata=None  # 待后续接入真实情绪识别
+            )
 
     async def _heartbeat_loop(self, queue: asyncio.Queue) -> None:
         """后台任务：每 N 秒执行一次心跳检测，有变化则向队列注入触发。"""
