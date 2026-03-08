@@ -50,7 +50,7 @@ async def run_one_turn_stream(
     turn_input: UserTurnInput,
     chat_history: list[dict[str, str]],
     *,
-    persona_name: str = "vedal_main",
+    persona_name: str = "character",
     user_info: str | None = None,
     mem0_user_id: str = "default",
     vision_image_override: Any = None,

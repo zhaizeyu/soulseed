@@ -9,7 +9,7 @@ from typing import Any
 _ASSETS = Path(__file__).resolve().parents[2] / "assets"
 PERSONAS_DIR = _ASSETS / "personas"
 WORLD_BOOKS_DIR = _ASSETS / "world_books"
-DEFAULT_PERSONA = "vedal_main.json"
+DEFAULT_PERSONA = "character.json"
 
 
 def load_persona(name: str = DEFAULT_PERSONA) -> dict[str, Any]:

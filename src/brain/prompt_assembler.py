@@ -63,16 +63,6 @@ def load_user_info() -> str:
     return d.get("content", "")
 
 
-def load_prompt_defaults() -> dict[str, Any]:
-    """加载默认的 mem0、chat_history、vision_audio（初始/测试用）。"""
-    d = _load_json("prompt_defaults")
-    return {
-        "mem0": d.get("mem0", []),
-        "chat_history": d.get("chat_history", []),
-        "vision_audio": d.get("vision_audio", ""),
-    }
-
-
 def _persona_data(persona: dict[str, Any]) -> dict[str, Any]:
     """兼容 chara_card (data.*) 与扁平 persona。"""
     if "data" in persona:
@@ -101,7 +91,7 @@ def _parse_mes_example(mes_example: str) -> list[dict[str, Any]]:
 
 def build_messages(
     *,
-    persona_name: str = "vedal_main",
+    persona_name: str = "character",
     user_info: str | None = None,
     mem0_lines: list[dict[str, Any]] | None = None,
     chat_history: list[dict[str, str]] | None = None,
@@ -117,12 +107,12 @@ def build_messages(
 
     - persona_name: 角色卡文件名（不含 .json），对应 assets/personas/
     - user_info: 用户身份描述，缺省则从 user_info.json 读取
-    - mem0_lines: Mem0 检索到的记忆片段列表（含 metadata），缺省则用 prompt_defaults 或空
-    - chat_history: 历史对话 [{role, content}, ...]
+    - mem0_lines: Mem0 检索到的记忆片段列表（含 metadata），缺省则为空
+    - chat_history: 历史对话 [{role, content}, ...]，缺省则为空
     - vision_audio_text: 当前耳朵/环境摘要文本，有则插入 §6
     - vision_image_attached: 本回合是否附屏幕截图（有则 §6 插入「读取屏幕截图」说明，图片由调用方随用户消息多模态传入）
     - current_user_input: 当前用户本回合输入
-    - use_defaults_for_missing: 若 mem0/chat_history 未传且为 None/空，是否用 prompt_defaults 填充
+    - use_defaults_for_missing: 保留兼容；未传 mem0/chat_history 时以空列表填充
     """
     persona = load_persona(persona_name if persona_name.endswith(".json") else f"{persona_name}.json")
     data = _persona_data(persona)
@@ -134,16 +124,8 @@ def build_messages(
 
     if user_info is None:
         user_info = load_user_info()
-    if mem0_lines is None and use_defaults_for_missing:
-        defaults = load_prompt_defaults()
-        # 兼容旧版字符串列表
-        raw_mem0 = defaults.get("mem0", []) or []
-        mem0_lines = [{"memory": m} if isinstance(m, str) else m for m in raw_mem0]
     if mem0_lines is None:
         mem0_lines = []
-    if chat_history is None and use_defaults_for_missing:
-        defaults = load_prompt_defaults()
-        chat_history = defaults.get("chat_history", []) or []
     if chat_history is None:
         chat_history = []
     # 环境感知仅在有真实传入时插入（主流程 orchestrator 当前恒传 None/空，不读默认，避免插假数据）

@@ -78,7 +78,7 @@ def _vision_image_to_part(vision_image: Any) -> Any:
 async def chat_stream(
     current_user_input: str,
     *,
-    persona_name: str = "vedal_main",
+    persona_name: str = "character",
     user_info: str | None = None,
     mem0_lines: list[str] | None = None,
     chat_history: list[dict[str, str]] | None = None,

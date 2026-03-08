@@ -36,12 +36,11 @@ SoulSeed_Project/
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
-│   │   └── vedal_main.json # 主脑 System Instruction (核心人设、行为准则)
+│   │   └── character.json # 主脑 System Instruction (核心人设、行为准则)
 │   ├── prompts/           # 提示词组装模板与默认数据
 │   │   ├── jailbreak.json  # 越狱/核心规则 (绝对头部)
 │   │   ├── task.json       # 输出风格限制 (绝对底部)
-│   │   ├── user_info.json  # 用户身份描述
-│   │   └── prompt_defaults.json # Mem0/历史/眼睛耳朵初始数据
+│   │   └── user_info.json  # 用户身份描述
 │   ├── world_books/        # 世界书 (Lore/规则) JSON，关键词触发，供组装提示词
 │   │   └── *.json         # 如 sex_acts_world_info.json
 │   ├── sounds/             # 预置音效 (如"思考中"提示音)
