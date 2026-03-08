@@ -9,7 +9,7 @@ from typing import Any
 
 from src.core.config_loader import get_config
 from src.core.logger import get_logger
-from src.brain import conscious
+from src.brain.conversation import run_one_turn_stream
 from src.brain.chat_history_store import load_history, append_turns
 from src.brain import memory as memory_module
 from src.brain.turn_input import UserTurnInput
@@ -50,26 +50,14 @@ class Orchestrator:
         vision_image_override: Any = None,
     ) -> None:
         """执行一轮：主脑流式生成，打印并写入历史。入参封装为 UserTurnInput 便于后续扩展。"""
-        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
-        turn_input = UserTurnInput(text=user_input or "", images=[vision_image] if vision_image is not None else None)
-        try:
-            limit = max(1, int(self._config.get("mem0_search_limit", 5)))
-            mem0_lines = await memory_module.search(turn_input.effective_text(), top_k=limit)
-        except Exception as e:
-            logger.debug("Mem0 检索跳过: %s", e)
-            mem0_lines = []
-        vision_image_use = turn_input.images[0] if turn_input.images else None
+        turn_input = UserTurnInput(text=user_input or "", images=None)
         full_reply: list[str] = []
         try:
-            async for chunk in conscious.chat_stream(
-                current_user_input=turn_input.effective_text(),
-                persona_name="vedal_main",
-                user_info=None,
-                mem0_lines=mem0_lines or None,
-                chat_history=self._chat_history,
-                vision_audio_text=None,
-                vision_image=vision_image_use,
-                use_defaults_for_missing=(len(self._chat_history) == 0),
+            async for chunk in run_one_turn_stream(
+                turn_input,
+                self._chat_history,
+                get_vision_image=self._get_vision_image,
+                vision_image_override=vision_image_override,
             ):
                 full_reply.append(chunk)
                 print(chunk, end="", flush=True)

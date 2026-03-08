@@ -68,6 +68,7 @@ SoulSeed_Project/
     ├── brain/              # === 大脑层 (认知与决策) ===
     │   ├── __init__.py
     │   ├── turn_input.py   # [统一输入] UserTurnInput(text/images/audio_path/metadata)，多端扩展不改签名
+    │   ├── conversation.py # [单轮流水线] run_one_turn_stream：Mem0 + 视觉 + 主脑流式，不读写历史/记忆；CLI/Web/Telegram 统一调用
     │   ├── conscious.py    # [主脑] 封装 Gemini API，处理多模态上下文、对话会话管理
     │   ├── prompt_assembler.py # [提示词组装] §1–§8 全在此组装，主脑不注入；§6 截图说明/耳朵，§7 无输入时「继续说话」
     │   ├── chat_history_store.py # [历史对话] JSON 持久化，每次加载最近 N 条
@@ -112,8 +113,8 @@ SoulSeed_Project/
 * **核心职责**：管理整个数字生命的“主游戏循环 (Main Loop)”。
 * **当前执行逻辑（第一步闭环 + 长期记忆）**：
 1. 加载 `config`、历史对话（`chat_history_store`）。
-2. 每轮：将本回合入参封装为 **`UserTurnInput`**（text + 可选 images）；用 `turn_input.effective_text()` 做 `memory.search(..., user_id="default")` 得到 mem0 结果，取 `turn_input.images[0]` 作为 vision；调用 `conscious.chat_stream(..., mem0_lines=..., vision_image=...)` 做主脑流式生成并打印。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒调用 `vision.check_heartbeat()`，有变化则向队列注入「画面发生了你感兴趣的变化…」回合，带当前截图执行一轮。
-3. 每轮结束：用 `turn_input.effective_text()` 与回复追加 user/assistant；**等待** `memory.add_background(..., user_id="default")` 写入长期记忆后再进入下一轮（metadata 可接入情绪识别，当前可传 None）。
+2. 每轮：将本回合入参封装为 **`UserTurnInput`**，调用 **`brain.conversation.run_one_turn_stream`**（传入 `chat_history`、`get_vision_image`、可选 `vision_image_override`）做主脑流式生成并打印。流水线内部完成 Mem0 检索、视觉解析（override 或截屏或 turn_input.images）、`conscious.chat_stream`。**用户直接回车（空输入）时仍执行本轮**，由 prompt_assembler §7 插入「继续说话」占位。**眼睛心跳**：后台每 N 秒调用 `vision.check_heartbeat()`，有变化则向队列注入「画面发生了你感兴趣的变化…」回合，带当前截图执行一轮（`vision_image_override` 传入流水线）。
+3. 每轮结束：用 `turn_input.effective_text()` 与回复追加 user/assistant 至 `chat_history_store`；**等待** `memory.add_background(..., user_id="default")` 写入长期记忆后再进入下一轮（metadata 可接入情绪识别，当前可传 None）。
 4. 后续阶段：接入 `hearing` / `vision` / `mouth` / `player` / `body`，用 `asyncio.gather` 并联；语音/插嘴时调用 `player.interrupt()`；`body` 计算参数并推送给 Web 前端以驱动 Live2D。
 
 
@@ -152,9 +153,13 @@ SoulSeed_Project/
 
 ### C. 大脑层 (`src/brain/`)
 
+* **`conversation.py` (单轮对话流水线)**
+* **核心职责**：提供 **`run_one_turn_stream`**，将「Mem0 检索 → 视觉解析 → 主脑流式」收敛到一处；**不读写历史与记忆**，由调用方（CLI/Web/Telegram）负责历史加载/追加与 `memory.add_background`。
+* **实现细节**：入参为 `UserTurnInput`、`chat_history`，可选 `mem0_user_id`、`vision_image_override`、`get_vision_image`（CLI/Web 截屏）、`vision_audio_text`。内部按 config 做 `memory.search`，解析本回合视觉（优先 override，否则 `get_vision_image()`，否则 `turn_input.images[0]`），再 `async for chunk in conscious.chat_stream(...): yield chunk`。三端统一调用此入口，单轮逻辑只维护一份。
+
 * **`turn_input.py` (统一用户回合输入)**
 * **核心职责**：将单轮用户输入抽象为 **`UserTurnInput`**（`text`、`images`、`audio_path`、`metadata`），供 CLI/Web/Telegram 等统一使用；后续扩展图片/语音/文件时只需往该结构填字段，无需改各端调用签名。
-* **实现细节**：`effective_text()` 返回供检索与主脑使用的文本（当前即 `text`，后续可合并语音转写）。Web/Orchestrator 在每轮先将入参构造成 `UserTurnInput`，再从其中取 `effective_text()` 与首图调用 memory + conscious。
+* **实现细节**：`effective_text()` 返回供检索与主脑使用的文本（当前即 `text`，后续可合并语音转写）。各端构造成 `UserTurnInput` 后传入 `conversation.run_one_turn_stream`。
 
 * **`prompt_assembler.py` (提示词组装)**
 * **核心职责**：**所有面向模型的提示词仅在此组装**（主脑不再注入）。按 prompt.md §1–§8 顺序：Jailbreak → 角色卡 → 示例 → Mem0 → 历史 → §6 环境感知 → §7 用户当前回合 → Task。
@@ -201,8 +206,8 @@ SoulSeed_Project/
 ### E. Web 层 (`src/web/`)
 
 * **`service.py` (对话服务)**
-* **核心职责**：封装单轮对话逻辑，与 CLI 共用 `chat_history_store`（唯一数据源）。
-* **实现细节**：入参在内部封装为 **`UserTurnInput`**（text + 可选 images）；用 `turn_input.effective_text()` 与首图做 Mem0 检索 → 截屏或 override 图 → 主脑流式；历史读写 `config.chat_history_file`。空输入表示「继续说话」，与 orchestrator 行为一致。
+* **核心职责**：封装单轮对话逻辑，与 CLI 共用 `chat_history_store`（唯一数据源）；内部调用 **`brain.conversation.run_one_turn_stream`** 做 Mem0 + 视觉 + 主脑流式。
+* **实现细节**：入参封装为 **`UserTurnInput`**，传入 `run_one_turn_stream(..., get_vision_image=self._get_vision_image, vision_image_override=...)` 并 yield 其产出；流结束后由 server 调用 `commit_turn` 写历史、`memory.add_background` 写记忆。空输入表示「继续说话」，与 orchestrator 行为一致。
 
 * **`server.py` (FastAPI)**
 * **核心职责**：暴露 HTTP API，供前端调用；**Web 模式含眼睛心跳**与统一日志。
@@ -230,6 +235,6 @@ SoulSeed_Project/
 
 * **设计文档**：详见 **`docs/telegram.md`**。
 * **核心职责**：基于 **python-telegram-bot** 对接 Telegram，使数字生命在 Telegram 中与用户对话；与 CLI/Web 解耦，**按 chat_id 隔离会话历史与 Mem0 user_id**。
-* **模块组成**：`bot.py`（PTB Application、polling）；`handlers.py`（/start、/help、/clear、文本、语音、图片）；`service.py`（按 chat_id 调用主脑与记忆）；`history.py`（按 chat_id 持久化历史至 `data/telegram/chats/`，**全量存储**，读取时只取最近 N 条作上下文）；`format_reply.py`（将助手回复按场景/心理/说的话转为 Telegram HTML：**语言** `<b>角色名："内容"</b>`、**心理** `<i>…</i>`、场景纯文本；角色名由 config `telegram_speaker_name` 指定，默认 Kurisu）。
+* **模块组成**：`bot.py`（PTB Application、polling）；`handlers.py`（/start、/help、/clear、文本、语音、图片）；`service.py`（按 chat_id 取历史后调用 **`brain.conversation.run_one_turn_stream`**（`mem0_user_id=tg_{chat_id}`），收集回复后写本端历史与 Mem0）；`history.py`（按 chat_id 持久化历史至 `data/telegram/chats/`，**全量存储**，读取时只取最近 N 条作上下文）；`format_reply.py`（将助手回复按场景/心理/说的话转为 Telegram HTML：**语言** `<b>角色名："内容"</b>`、**心理** `<i>…</i>`、场景纯文本；角色名由 config `telegram_speaker_name` 指定，默认 Kurisu）。
 * **输入**：文本直接送主脑；语音经 `hearing.speech_to_text` 转写后作为用户输入；图片下载后经 `vision.prepare_image_for_turn` 压缩（与眼睛同配置）再送主脑。
 * **运行方式**：独立入口 `python -m src.telegram`；需配置 `.env` 中 `TELEGRAM_BOT_TOKEN` 及 `config.yaml` 中 `telegram_enabled`；可选 `telegram_speaker_name`、`telegram_max_history_entries`、`telegram_chat_history_dir`。

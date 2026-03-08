@@ -44,7 +44,7 @@
 ### 2. 通用输入对象（核心契约）
 
 - **统一输入**：`UserTurnInput`（`src.brain.turn_input`），字段：`text`、`images`（列表，首张作 vision）、`audio_path`、`metadata`。后续扩展 Telegram 图片/语音、Web 上传文件等只需往该结构填字段，调用方从 `turn_input.effective_text()` 与 `turn_input.images` 取内容再调现有 memory + conscious，无需改函数签名。
-- 各客户端（CLI、Web、Telegram）自行：加载历史 → 构建 `UserTurnInput` → `memory.search` + `conscious.chat_stream`（或封装一层）→ 写回历史与 `add_background`。不新增统一「会话层」文件。
+- 各客户端（CLI、Web、Telegram）自行：加载历史 → 构建 `UserTurnInput` → 调用 **`brain.conversation.run_one_turn_stream`**（单轮流水线）→ 写回历史与 `memory.add_background`。单轮逻辑统一在 `conversation.py`，三端只负责历史来源与 mem0 user_id。
 
 ### 3. 模块划分（Telegram 仅作插件）
 
@@ -64,13 +64,13 @@ src/
 ```
 
 - **brain** 中不出现 Telegram；**telegram** 中不出现 Web/CLI 业务逻辑，只做「Telegram I/O + session_id 映射 + 本端历史」。
-- **service.py**：从 `history.get(chat_id)` 取历史 → 构建 `UserTurnInput(text=..., images=[...] 若用户发图)`；**若本回合是语音消息**，则先将语音文件下载为 bytes，调 **hearing.speech_to_text(audio_bytes, filename)** 得到文字，再设 `UserTurnInput(text=转写结果)`。之后与文本消息同一套：`memory.search(user_id="tg_"+chat_id)` + `conscious.chat_stream(...)` → 收集回复 → `history.append`、`memory.add_background(..., user_id="tg_"+chat_id)` → 把回复交给 handlers 发回 Telegram。
+- **service.py**：从 `history.get(chat_id)` 取历史 → 构建 `UserTurnInput(text=..., images=[...] 若用户发图)`；**若本回合是语音消息**，则先将语音文件下载为 bytes，调 **hearing.speech_to_text(audio_bytes, filename)** 得到文字，再设 `UserTurnInput(text=转写结果)`。之后与文本消息同一套：调用 **`brain.conversation.run_one_turn_stream(turn_input, chat_history, mem0_user_id="tg_"+chat_id)`** → 收集回复 → `history.append`、`memory.add_background(..., user_id="tg_"+chat_id)` → 把回复交给 handlers 发回 Telegram。
 
 ### 4. 数据流（Telegram 插件内）
 
-- **文本消息**：用户发文字 → handlers → service 用 `UserTurnInput(text=消息)` + `history.get(chat_id)` → `memory.search` + `conscious.chat_stream` → 收集回复 → `history.append`、`memory.add_background` → handlers 发回 reply。
-- **语音消息**：用户发语音 → handlers 用 `bot.get_file(voice.file_id)` 下载音频为 bytes → **hearing.speech_to_text(audio_bytes, "voice.ogg")** 得到「用户说的话」→ service 用 `UserTurnInput(text=转写结果)`，其后与文本消息**完全同一套**（history.get → memory.search → conscious.chat_stream → history.append + add_background → 发回 reply）。
-- **图片消息**：用户发图 → handlers 取最大尺寸、下载为 bytes → PIL 打开后 **vision.prepare_image_for_turn(img, save=True)** 压缩并可选存 data/vision → `UserTurnInput(text=caption 或占位, images=[img])` → service 同上。
+- **文本消息**：用户发文字 → handlers → service 用 `UserTurnInput(text=消息)` + `history.get(chat_id)` → **`run_one_turn_stream(..., mem0_user_id=tg_{chat_id})`** → 收集回复 → `history.append`、`memory.add_background` → handlers 发回 reply。
+- **语音消息**：用户发语音 → handlers 用 `bot.get_file(voice.file_id)` 下载音频为 bytes → **hearing.speech_to_text(audio_bytes, "voice.ogg")** 得到「用户说的话」→ service 用 `UserTurnInput(text=转写结果)`，其后与文本消息**完全同一套**（history.get → run_one_turn_stream → history.append + add_background → 发回 reply）。
+- **图片消息**：用户发图 → handlers 取最大尺寸、下载为 bytes → PIL 打开后 **vision.prepare_image_for_turn(img, save=True)** 压缩并可选存 data/vision → `UserTurnInput(text=caption 或占位, images=[img])` → service 同上（run_one_turn_stream 使用 turn_input.images）。
 
 **会话历史**：`history.py` 全量写入 `data/telegram/chats/{chat_id}.json`，读取时只取最近 `telegram_max_history_entries` 条作为上下文发给主脑，与 Web/CLI 的 chat_history 逻辑一致。
 
@@ -82,8 +82,8 @@ src/
 |------|------|
 | config_loader | 读本插件配置与 GEMINI_API_KEY |
 | hearing.speech_to_text(audio_bytes, filename) | 语音消息转文字，与 Web 端 STT 共用（Gemini 多模态），转写结果作为用户说的话 |
-| memory.search / add_background(user_id=session_id) | 仅传会话标识，核心不感知 Telegram |
-| conscious.chat_stream | 与现有一致 |
+| brain.conversation.run_one_turn_stream | 单轮流水线（Mem0 + 视觉 + 主脑流式），传入 mem0_user_id=tg_{chat_id} |
+| memory.add_background(user_id=session_id) | 每轮结束后写长期记忆，会话标识为 tg_{chat_id}；Mem0 检索在流水线内部完成 |
 | **不依赖** | chat_history_store、orchestrator、任何 Web 专有逻辑；历史完全在 telegram/history.py |
 
 ### 6. 配置项建议
@@ -124,7 +124,7 @@ TELEGRAM_BOT_TOKEN=your_bot_token_from_@BotFather
 
 ## 五、实现顺序建议
 
-1. **核心已就绪**：`memory.search` / `add_background` 已支持 `user_id`；Web/CLI 每轮使用 **UserTurnInput** 封装入参后调 memory + conscious，无单独「会话层」。
+1. **核心已就绪**：`memory` 已支持 `user_id`；单轮流水线已统一为 **`brain.conversation.run_one_turn_stream`**，Web/CLI/Telegram 均调用该入口，传入各自历史与 mem0_user_id。
 2. **Telegram 插件**：在 `src/telegram/` 内实现 `history.py`（按 chat_id 的 JSON 读写与 clear）→ `service.py`（构建 `UserTurnInput(text=..., images=[...] 若用户发图)`，session_id=`tg_{chat_id}`，与 Web/CLI 相同逻辑：memory.search(user_id=session_id) + conscious.chat_stream，再写本端历史与 add_background(user_id=session_id)）→ `handlers.py`（/start、/help、/clear、文本）→ `bot.py` 与 `__main__.py`；配置仅限本插件（`TELEGRAM_BOT_TOKEN`、`telegram_*`）。
 3. **可选**：用户发图时在 handler 中取 `message.photo`，下载后放入 `UserTurnInput(images=[path])`。
 

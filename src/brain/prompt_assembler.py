@@ -1,6 +1,9 @@
 """
 提示词组装 — 按 prompt.md 顺序拼接：Jailbreak → 用户信息 → 角色卡 → 示例对话 → Mem0 → 历史对话 → 眼睛与耳朵 → 当前用户 → Task。
 数据来源：assets/prompts/*.json、persona、运行时 mem0/历史/感知/用户输入。
+
+约定：所有与主对话相关的提示词组装均只在本文件中完成；其它模块仅调用本模块的 build_messages 等接口，
+不得在 prompt_assembler 之外拼接发给模型的 system/user 消息或调整顺序。新增段落或风格约束时只在本文件内扩展。
 """
 import json
 import re
