@@ -15,7 +15,10 @@
 
 1. **Python 3.11+**  
    Debian 12：`sudo apt install python3.11 python3.11-venv python3-pip`  
-   或使用 [deadsnakes PPA](https://github.com/deadsnakes/python3.11) / 自编译。
+   或使用 [deadsnakes PPA](https://github.com/deadsnakes/python3.11) / 自编译。  
+   **Debian 默认没有 `python` 命令**，只有 `python3` / `python3.11`。可任选其一：
+   - 直接用 `python3.11`（如创建 venv：`python3.11 -m venv .venv`；激活后用 `python` 即可，venv 内会提供）。
+   - 需要系统级 `python` 时：`sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1`
 
 2. **`.env`**（项目根目录）  
    - 必填：`GEMINI_API_KEY=你的密钥`  
@@ -39,7 +42,25 @@
 - **仅 Telegram Bot**：在 `config.yaml` 中设 `telegram_enabled: true`，然后 `python -m src.telegram`
 - **CLI 主循环**：`python main.py`（需有终端交互，适合调试）
 
-## 四、可选：进程保活（systemd）
+## 四、后端运行（断 SSH 后保持）
+
+**方式 A：nohup 简单后台**
+
+```bash
+cd /path/to/SoulSeed_Project
+source .venv/bin/activate
+nohup python -m src.telegram > logs/telegram.log 2>&1 &
+# 查看进程：ps aux | grep src.telegram
+# 结束：kill <PID>
+```
+
+Web 同理：`nohup python -m src.web > logs/web.log 2>&1 &`
+
+**方式 B：systemd（推荐，开机自启 + 崩溃重启）**
+
+见下节。
+
+## 五、可选：进程保活（systemd）
 
 以 Web 为例，可建 `/etc/systemd/system/soulseed-web.service`：
 
@@ -62,12 +83,33 @@ WantedBy=multi-user.target
 
 然后：`sudo systemctl daemon-reload && sudo systemctl enable --now soulseed-web`。
 
-## 五、防火墙与安全
+**Telegram Bot** 可建 `/etc/systemd/system/soulseed-telegram.service`：
+
+```ini
+[Unit]
+Description=SoulSeed Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=你的用户
+WorkingDirectory=/path/to/SoulSeed_Project
+Environment=PATH=/path/to/SoulSeed_Project/.venv/bin
+ExecStart=/path/to/SoulSeed_Project/.venv/bin/python -m src.telegram
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+然后：`sudo systemctl daemon-reload && sudo systemctl enable --now soulseed-telegram`。
+
+## 六、防火墙与安全
 
 - 若从外网访问 Web：放行 `web_port`（默认 8765），例如 `ufw allow 8765/tcp`。
 - `.env` 不要提交到仓库；生产环境建议用独立用户、限制目录权限。
 
-## 六、若将来在服务器上启用「眼睛」（截屏）
+## 七、若将来在服务器上启用「眼睛」（截屏）
 
 无图形界面时 mss 会失败。若确需在服务器上截屏（例如用虚拟显示），可：
 

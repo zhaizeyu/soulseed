@@ -20,11 +20,8 @@ edge-tts>=6.1.0   # TTS，嘴巴播报「说的话」；config tts_voice
 # 大脑 (Gemini)：主脑、STT、Mem0 均使用 google-genai
 google-genai>=1.0.0
 
-# 记忆 (Mem0)
-# mem0ai 或 自建向量库 (qdrant-client, chromadb)
-
-# VTube Studio
-# pyvts
+# 记忆 (Mem0，需 GEMINI_API_KEY)
+mem0ai>=0.1.0
 
 # Telegram Bot（独立入口 python -m src.telegram）
 python-telegram-bot>=21.0
