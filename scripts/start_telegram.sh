@@ -9,7 +9,7 @@ LOG_FILE="$ROOT/logs/telegram.log"
 
 [ -d "$ROOT/logs" ] || mkdir -p "$ROOT/logs"
 if [ -d "$ROOT/.venv" ]; then
-  source "$ROOT/.venv/bin/activate"
+  . "$ROOT/.venv/bin/activate"
 fi
 
 if [ -f "$PID_FILE" ]; then
