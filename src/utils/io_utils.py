@@ -54,7 +54,8 @@ def get_world_book_prompt_snippet(
     only_enabled: bool = True,
 ) -> str:
     """
-    从已加载的世界书中取出条目的 content，拼成一段文本，供未来组装提示词用。
+    从已加载的世界书中取出条目的 content，拼成一段文本，供组装提示词用。
+    当前未被调用，待后续在 prompt_assembler 或流水线中按关键词/会话注入。
     - entry_ids: 若指定，只取这些 id 的条目；否则取全部。
     - only_enabled: 是否只取 enabled 且非 disable 的条目。
     """
