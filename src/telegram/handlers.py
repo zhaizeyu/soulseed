@@ -32,7 +32,7 @@ async def _send_reply(update: Update, text: str) -> None:
         logger.debug("Telegram HTML 渲染失败，回退纯文本: %s", e)
         await update.message.reply_text(msg)
 
-WELCOME = "你好，我是 VedalAI。发文字、语音或图片都可以，我会记住我们的对话。"
+WELCOME = "你好，我是 SoulSeed。发文字、语音或图片都可以，我会记住我们的对话。"
 HELP_TEXT = "发送文字、语音或图片与我对话。\n/clear 清空当前会话的上下文（记忆保留）。"
 CLEAR_DONE = "已清空本会话历史，记忆仍在。"
 VOICE_EMPTY = "没听清，再说一次吧～"

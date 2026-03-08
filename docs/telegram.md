@@ -1,6 +1,6 @@
 # Telegram 对接 — 功能与架构设计
 
-基于 **python-telegram-bot**（PTB v21+ 异步）将 Telegram 作为**可插拔客户端**之一接入 VedalAI。核心原则：**核心与客户端解耦、插件化，客户端可随便换**。核心层只提供「按会话（session_id）的对话与记忆」通用能力，不感知 Telegram；Telegram 仅作为插件调用同一套会话 API，并自行管理本端历史与 I/O。
+基于 **python-telegram-bot**（PTB v21+ 异步）将 Telegram 作为**可插拔客户端**之一接入 SoulSeed。核心原则：**核心与客户端解耦、插件化，客户端可随便换**。核心层只提供「按会话（session_id）的对话与记忆」通用能力，不感知 Telegram；Telegram 仅作为插件调用同一套会话 API，并自行管理本端历史与 I/O。
 
 ---
 

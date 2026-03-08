@@ -221,15 +221,11 @@ export default function App() {
             />
             <div>
               <h1 className="text-sm font-medium tracking-tight text-white uppercase opacity-90">
-                VedalAI{" "}
+                SoulSeed{" "}
                 <span className="text-slate-500 font-light mx-2">|</span>{" "}
                 <span className="text-indigo-400">Terminal</span>
               </h1>
             </div>
-          </div>
-          <div className="flex items-center space-x-3 text-[10px] font-mono text-slate-500 uppercase tracking-widest">
-            <span className="bg-white/[0.03] px-2 py-1 rounded">Secure</span>
-            <span className="text-emerald-500/80">Online</span>
           </div>
         </header>
 

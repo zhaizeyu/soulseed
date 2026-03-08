@@ -46,7 +46,7 @@ _file_handler: logging.FileHandler | None = None
 
 
 class _FlushFileHandler(logging.FileHandler):
-    """写入后立即 flush，便于在 logs/vedalai.log 中实时看到新内容。"""
+    """写入后立即 flush，便于在 logs/soulseed.log 中实时看到新内容。"""
     def emit(self, record: logging.LogRecord) -> None:
         super().emit(record)
         self.flush()
@@ -61,14 +61,14 @@ def _get_log_path() -> Path:
         from src.core.config_loader import get_config
         cfg = get_config()
         log_dir = (cfg.get("log_dir") or "logs").strip()
-        log_file = (cfg.get("log_file") or "vedalai.log").strip()
+        log_file = (cfg.get("log_file") or "soulseed.log").strip()
         p_dir = Path(log_dir)
         if p_dir.is_absolute():
             _LOG_FILE = p_dir / log_file
         else:
             _LOG_FILE = _PROJECT_ROOT / log_dir / log_file
     except Exception:
-        _LOG_FILE = _PROJECT_ROOT / "logs" / "vedalai.log"
+        _LOG_FILE = _PROJECT_ROOT / "logs" / "soulseed.log"
     return _LOG_FILE
 
 

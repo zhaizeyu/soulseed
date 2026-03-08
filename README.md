@@ -1,4 +1,4 @@
-# 数字生命 MVP (VedalAI Project)
+# 数字生命 MVP (SoulSeed Project)
 
 基于 Gemini 多模态原生架构的数字生命 MVP，详见 [arch.md](docs/arch.md)。
 
@@ -19,7 +19,7 @@
 5. **长期记忆**：配置了 `GEMINI_API_KEY` 后自动启用 Mem0，数据落在 `data/mem0/`。支持记忆元数据（情绪、重要度、时间、类型）；每轮结束后会等待写入再进入下一轮。查看已存记忆及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`。
 6. **眼睛**：默认每轮截屏并作为多模态输入传给主脑（Gemini 可见当前屏幕）。会先按 `vision_max_longer_side` 缩放再发送（省 token），并可选将截图存到 `data/vision/`（`vision_save_enabled`、`vision_save_dir`、`vision_save_format`、`vision_jpeg_quality`）。设 `vision_enabled: false` 可关闭截屏。
 7. **主脑输出长度**：`config.yaml` 中 `gemini_max_output_tokens`（默认 8192）控制单轮回复上限，过小可能导致输出被截断。
-8. 运行期日志写入 `logs/vedalai.log`（可在 `config.yaml` 中配置 `log_dir` / `log_file`）。
+8. 运行期日志写入 `logs/soulseed.log`（可在 `config.yaml` 中配置 `log_dir` / `log_file`）。
 
 ## Web 对话（与 CLI 解耦）
 

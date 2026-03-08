@@ -27,7 +27,7 @@
 
 4. **依赖安装**  
    ```bash
-   cd /path/to/VedalAI_Project
+   cd /path/to/SoulSeed_Project
    python3.11 -m venv .venv
    source .venv/bin/activate
    pip install -r requirements.txt
@@ -41,26 +41,26 @@
 
 ## 四、可选：进程保活（systemd）
 
-以 Web 为例，可建 `/etc/systemd/system/vedalai-web.service`：
+以 Web 为例，可建 `/etc/systemd/system/soulseed-web.service`：
 
 ```ini
 [Unit]
-Description=VedalAI Web
+Description=SoulSeed Web
 After=network.target
 
 [Service]
 Type=simple
 User=你的用户
-WorkingDirectory=/path/to/VedalAI_Project
-Environment=PATH=/path/to/VedalAI_Project/.venv/bin
-ExecStart=/path/to/VedalAI_Project/.venv/bin/python -m src.web
+WorkingDirectory=/path/to/SoulSeed_Project
+Environment=PATH=/path/to/SoulSeed_Project/.venv/bin
+ExecStart=/path/to/SoulSeed_Project/.venv/bin/python -m src.web
 Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-然后：`sudo systemctl daemon-reload && sudo systemctl enable --now vedalai-web`。
+然后：`sudo systemctl daemon-reload && sudo systemctl enable --now soulseed-web`。
 
 ## 五、防火墙与安全
 

@@ -1,4 +1,4 @@
-# VedalAI Web 前端
+# SoulSeed Web 前端
 
 - **构建**: Vite + React + TypeScript
 - **样式**: Tailwind CSS

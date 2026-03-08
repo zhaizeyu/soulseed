@@ -5,7 +5,7 @@
 ## 📐 1. 项目目录结构总览
 
 ```text
-VedalAI_Project/
+SoulSeed_Project/
 ├── .env                    # [机密] 存放 API Key：GEMINI_API_KEY（主脑、Mem0、语音转写均用 Google Gemini）
 ├── config.yaml             # [配置] 全局参数 (主脑/记忆/日志/感官/表达)
 ├── main.py                 # [入口] 程序启动总入口
@@ -214,7 +214,7 @@ VedalAI_Project/
 
 * **技术栈**：Vite + React + TypeScript + Tailwind + shadcn/ui 风格 + Lucide + TanStack Query + Framer Motion；**Live2D 使用 Cubism Web SDK 官方 SDK** 在浏览器中加载与渲染模型。
 * **UI 与渲染**：
-  * **配色**：深色主题（背景 `#0f1117`），顶栏 VedalAI | Terminal，绿色状态点、Secure/Online。
+  * **配色**：深色主题（背景 `#0f1117`），顶栏 SoulSeed | Terminal，绿色状态点。
   * **输入框**：固定在底部（`shrink-0`），贴底通栏；**空输入也可发送**（继续说话）。
   * **消息渲染**：`webapp/src/lib/format-content.ts` 解析助手回复，按类型分段：
     * `(...)` / `（...）` → 心理想的（褐色斜体 `text-thought`）

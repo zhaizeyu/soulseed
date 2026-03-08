@@ -97,7 +97,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="VedalAI Chat API",
+    title="SoulSeed Chat API",
     description="数字生命对话接口，与 CLI 调度器解耦",
     version="0.1.0",
     lifespan=lifespan,
@@ -159,7 +159,7 @@ async def _stream_reply(message: str) -> AsyncIterator[str]:
 
 @app.get("/")
 async def root():
-    return {"service": "VedalAI Chat API", "docs": "/docs"}
+    return {"service": "SoulSeed Chat API", "docs": "/docs"}
 
 
 @app.get("/api/health")

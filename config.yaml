@@ -2,13 +2,13 @@
 
 # 日志（目录相对项目根，可为绝对路径）
 log_dir: "logs"
-log_file: "vedalai.log"
+log_file: "soulseed.log"
 
 # 历史对话（JSON 持久化，每次加载最新 N 条）
 chat_history_file: "data/chat_history.json"
 chat_history_max_entries: 20
 
-# 调试：开启后在每次发送给大模型前将组装好的完整提示词打印到日志 (logs/vedalai.log)
+# 调试：开启后在每次发送给大模型前将组装好的完整提示词打印到日志 (logs/soulseed.log)
 debug_log_prompt: false
 
 # 主脑 (Gemini)
