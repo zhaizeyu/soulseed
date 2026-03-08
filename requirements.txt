@@ -17,8 +17,7 @@ Pillow>=10.0.0
 edge-tts>=6.1.0   # TTS，嘴巴播报「说的话」；config tts_voice
 # webrtcvad 或 silero-vad
 
-# 大脑 (Gemini)：主脑用 google-generativeai；Mem0 的 Gemini 用 google-genai
-google-generativeai>=0.8.0
+# 大脑 (Gemini)：主脑、STT、Mem0 均使用 google-genai
 google-genai>=1.0.0
 
 # 记忆 (Mem0)
@@ -26,6 +25,9 @@ google-genai>=1.0.0
 
 # VTube Studio
 # pyvts
+
+# Telegram Bot（独立入口 python -m src.telegram）
+python-telegram-bot>=21.0
 
 # Web (FastAPI，与 main 解耦；语音上传需 multipart)
 fastapi>=0.115.0

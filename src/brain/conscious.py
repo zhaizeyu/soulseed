@@ -1,10 +1,10 @@
 """
-主脑 — 封装 Gemini API，处理多模态上下文与对话会话管理。
+主脑 — 封装 Gemini API（google-genai），处理多模态上下文与对话会话管理。
 按 prompt_assembler 的消息顺序逐条喂给大模型，不合并 system；Gemini 仅支持 user/model，
 故将 system 转为带 [System] 标记的 user + 空 model 以保持顺序。
 """
+import io
 import json
-import warnings
 from typing import Any, AsyncIterator
 
 from src.core.config_loader import get_config
@@ -17,20 +17,12 @@ logger = get_logger(__name__)
 _SYSTEM_PREFIX = "[System]\n"
 
 
-def _messages_to_gemini_contents(messages: list[dict[str, Any]]) -> tuple[list[Any], str]:
+def _messages_to_genai_contents(messages: list[dict[str, Any]]) -> tuple[list[Any], str]:
     """
-    按原始顺序将每条消息转为 Gemini Content，不合并。
-    返回 (history_contents, current_user_content)。
-    - system -> user("[System]\\n" + content) + model("") 以保持顺序
-    - user -> user(content)；最后一条 user 作为本次 send_message 内容，其余按序进 history
-    - assistant -> model(content)
+    将 messages 转为 google.genai types.Content 列表与当前 user 文本。
+    返回 (history_contents, current_user_text)。
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", category=FutureWarning)
-        try:
-            from google.generativeai import protos
-        except ImportError:
-            raise RuntimeError("请安装 google-generativeai: pip install google-generativeai")
+    from google.genai import types
 
     last_user_idx: int | None = None
     for i in range(len(messages) - 1, -1, -1):
@@ -39,22 +31,48 @@ def _messages_to_gemini_contents(messages: list[dict[str, Any]]) -> tuple[list[A
             break
 
     contents: list[Any] = []
-    current_user_content = ""
+    current_user_text = ""
     for i, m in enumerate(messages):
         role = m.get("role", "")
         content = (m.get("content") or "").strip()
         if role == "user" and i == last_user_idx:
-            current_user_content = content
+            current_user_text = content
             continue
         if role == "system":
-            contents.append(protos.Content(role="user", parts=[protos.Part(text=_SYSTEM_PREFIX + content)]))
-            contents.append(protos.Content(role="model", parts=[protos.Part(text="")]))
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=_SYSTEM_PREFIX + content)],
+                )
+            )
+            contents.append(types.Content(role="model", parts=[types.Part.from_text(text="")]))
         elif role == "user":
-            contents.append(protos.Content(role="user", parts=[protos.Part(text=content)]))
+            contents.append(
+                types.Content(role="user", parts=[types.Part.from_text(text=content)])
+            )
         elif role == "assistant":
-            contents.append(protos.Content(role="model", parts=[protos.Part(text=content)]))
+            contents.append(
+                types.Content(role="model", parts=[types.Part.from_text(text=content)])
+            )
 
-    return contents, current_user_content
+    return contents, current_user_text
+
+
+def _vision_image_to_part(vision_image: Any) -> Any:
+    """将 PIL.Image 转为 google.genai types.Part（JPEG bytes）。"""
+    from google.genai import types
+
+    if vision_image is None:
+        return None
+    try:
+        from PIL import Image
+        if not isinstance(vision_image, Image.Image):
+            return None
+        buf = io.BytesIO()
+        vision_image.save(buf, format="JPEG", quality=85)
+        return types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+    except Exception:
+        return None
 
 
 async def chat_stream(
@@ -69,11 +87,11 @@ async def chat_stream(
     use_defaults_for_missing: bool = False,
 ) -> AsyncIterator[str]:
     """
-    接收当前用户输入与可选上下文，组装 prompt 后调用 Gemini 流式生成，yield 文本片段。
+    接收当前用户输入与可选上下文，组装 prompt 后调用 Gemini（google-genai）流式生成，yield 文本片段。
     调用方负责维护 chat_history（每轮结束后追加 user 与 assistant 的 content）。
     """
     config = get_config()
-    api_key = config.get("GEMINI_API_KEY") or ""
+    api_key = (config.get("GEMINI_API_KEY") or "").strip()
     if not api_key:
         logger.warning("GEMINI_API_KEY 未配置，将跳过真实调用")
         yield "[未配置 GEMINI_API_KEY]"
@@ -90,10 +108,25 @@ async def chat_stream(
         use_defaults_for_missing=use_defaults_for_missing,
     )
 
-    history_contents, current_user_content = _messages_to_gemini_contents(messages)
-    if not history_contents and not current_user_content:
+    try:
+        history_contents, current_user_text = _messages_to_genai_contents(messages)
+    except ImportError as e:
+        logger.error("未安装 google-genai: %s", e)
+        yield "[请安装: pip install google-genai]"
+        return
+
+    if not current_user_text and not history_contents:
         yield ""
         return
+
+    from google.genai import types
+
+    image_part = _vision_image_to_part(vision_image)
+    user_parts: list[Any] = [types.Part.from_text(text=current_user_text or "")]
+    if image_part is not None:
+        user_parts.append(image_part)
+    current_content = types.Content(role="user", parts=user_parts)
+    all_contents = history_contents + [current_content]
 
     # 调试：将组装好的完整提示词打印到日志（config debug_log_prompt=true）
     if config.get("debug_log_prompt"):
@@ -106,50 +139,39 @@ async def chat_stream(
         except Exception as e:
             logger.warning("[主脑] 打印组装提示词失败: %s", e)
 
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=FutureWarning)
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-    except ImportError:
-        logger.error("未安装 google-generativeai")
-        yield "[请安装: pip install google-generativeai]"
-        return
+    model_name = (config.get("gemini_model") or config.get("GEMINI_MODEL") or "gemini-2.0-flash").strip()
+    if model_name.startswith("models/"):
+        model_name = model_name.replace("models/", "", 1)
 
-    model_name = config.get("gemini_model") or config.get("GEMINI_MODEL") or "gemini-2.0-flash"
-    if not model_name.startswith("models/"):
-        model_name = f"models/{model_name}"
+    max_output_tokens = 8192
+    if config.get("gemini_max_output_tokens") is not None:
+        try:
+            max_output_tokens = max(256, min(65536, int(config.get("gemini_max_output_tokens"))))
+        except (TypeError, ValueError):
+            pass
 
     try:
-        max_output_tokens = 8192
-        if config.get("gemini_max_output_tokens") is not None:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        async for chunk in await client.aio.models.generate_content_stream(
+            model=model_name,
+            contents=all_contents,
+            config=types.GenerateContentConfig(max_output_tokens=max_output_tokens),
+        ):
             try:
-                max_output_tokens = max(256, min(65536, int(config.get("gemini_max_output_tokens"))))
-            except (TypeError, ValueError):
-                pass
-        generation_config = genai.GenerationConfig(max_output_tokens=max_output_tokens)
-        # 不设 system_instruction，全部按顺序放在 history 中
-        model = genai.GenerativeModel(model_name=model_name, generation_config=generation_config)
-        chat = model.start_chat(history=history_contents)
-        # 本回合发送内容：仅组装好的用户文字 + 可选截图（§7 保证必有 user，不会为空）
-        user_message: Any = current_user_content
-        if vision_image is not None:
-            user_message = [user_message, vision_image]
-        response = chat.send_message(user_message, stream=True)
-        for chunk in response:
-            try:
-                if chunk.text:
+                if getattr(chunk, "text", None):
                     yield chunk.text
             except (ValueError, AttributeError):
-                # 无有效 Part：可能是安全/引用过滤，或达到 max_output_tokens 上限导致流结束
                 logger.warning(
-                    "[主脑] 流式返回无有效 Part，输出已截断（可能原因：安全/引用过滤，或回复过长触及 gemini_max_output_tokens 上限，可适当提高 config 中 gemini_max_output_tokens）"
+                    "[主脑] 流式返回无有效 Part，输出已截断（可能原因：安全/引用过滤，或回复过长触及 gemini_max_output_tokens 上限）"
                 )
-                pass
+    except ImportError as e:
+        logger.error("未安装 google-genai: %s", e)
+        yield "[请安装: pip install google-genai]"
     except Exception as e:
         logger.exception("Gemini 流式调用异常: %s", e)
         err_msg = str(e).strip()
-        if "API key not valid" in err_msg or "API_KEY_INVALID" in err_msg:
+        if "API key not valid" in err_msg or "API_KEY_INVALID" in err_msg or "401" in err_msg:
             yield (
                 "[Gemini API Key 无效] 请检查 .env 中的 GEMINI_API_KEY："
                 " 在 https://aistudio.google.com/apikey 申请并启用 Generative Language API，"

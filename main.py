@@ -3,6 +3,9 @@
 数字生命 MVP — 程序启动总入口
 参见 docs/arch.md 架构设计。
 """
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*AiohttpClientSession.*")
+
 import asyncio
 
 from src.core.logger import get_logger, get_log_path

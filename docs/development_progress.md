@@ -15,7 +15,7 @@
 |------|------|------|
 | turn_input | ✅ | UserTurnInput(text/images/audio_path/metadata)，单轮用户输入统一对象；Web/Orchestrator 先封装再调 memory + conscious，后续扩展不改签名 |
 | prompt_assembler | ✅ | §1–§8 全在此组装，主脑不注入；§4 记忆带 timestamp/time_context/情绪/重要度格式化；§6 截图/耳朵，§7 无输入时「继续说话」占位 |
-| conscious | ✅ | 组装好的 current_user_content + 可选 vision_image 送 Gemini 流式；config 支持 gemini_max_output_tokens 控制输出长度 |
+| conscious | ✅ | 使用 **google-genai** 流式生成；组装好的 current_user_content + 可选 vision_image（PIL→JPEG bytes）送 Gemini；config 支持 gemini_max_output_tokens 控制输出长度 |
 | chat_history_store | ✅ | JSON 持久化、每次加载最近 N 条、配置化路径与条数 |
 | memory | ✅ | Mem0：search/add_background 支持 user_id 多端隔离；metadata（情绪、重要度等）+ timestamp/time_context；inspect_mem0_vectors.py 可查看完整元数据 |
 | tools_registry | ⏳ 占位 | 未实现业务工具，未接入 conscious |
@@ -30,7 +30,7 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | vision | ✅ | capture_screen() + get_screen_for_turn()；**心跳检测**：每 N 秒（如 30）截图与上一帧缩略图对比，差异超阈值则触发主动说话（check_heartbeat）；已接入 orchestrator 队列 |
-| hearing | ✅ 部分 | Web：`speech_to_text(audio_bytes)` 使用 **Gemini** 多模态转写，与主脑共用 GEMINI_API_KEY；CLI 端 VAD+录音未接 |
+| hearing | ✅ 部分 | 使用 **google-genai** 多模态转写；Web `POST /api/speech-to-text`、Telegram 语音消息均调用；与主脑共用 GEMINI_API_KEY；CLI 端 VAD+录音未接 |
 
 ### 5. 表达层
 | 模块 | 状态 | 说明 |
@@ -52,6 +52,11 @@
 | src/web | ✅ | service.py 单轮对话封装，与 CLI 共用 chat_history_store；server.py：GET /api/history、GET /api/config、POST /api/chat（SSE）、POST /api/chat/sync、POST /api/speech-to-text、**POST /api/tts**（TTS）；Web 心跳 + 日志 |
 | webapp | ✅ | 深色主题、输入框贴底、空输入可发送；麦克风语音输入；流式结束后按 **tts_reply_enabled** 自动播报「说的话」；format-content 心理/说的话/场景、反引号高亮；**双引号内字数少于 5 按场景文字渲染**；轮询 /api/history |
 | scripts | ✅ | start_web.sh、stop_web.sh 一键起停；前端 5173，后端 8765 |
+
+### 8. Telegram 模块 — ✅ 已完成
+| 模块 | 状态 | 说明 |
+|------|------|------|
+| src/telegram | ✅ | 独立入口 `python -m src.telegram`；handlers：/start、/help、/clear、文本、语音（STT）、图片（vision 压缩）；service 按 chat_id 调 memory + conscious，user_id=tg_{chat_id}；history 全量存盘、读取最近 N 条；format_reply 将回复转为 Telegram HTML（语言 `<b>角色名："内容"</b>`、心理 `<i>…</i>`）；config：telegram_enabled、telegram_max_history_entries、telegram_speaker_name。 |
 
 ---
 
@@ -115,4 +120,4 @@
 6. **阶段 7（工具箱）** — 按产品需求决定优先级。  
 7. **阶段 8（调度整合）** — 全链路并联与稳定性收尾。
 
-当前可运行链路：**CLI**：模拟输入（直接回车=继续说话）→ Mem0 检索 → 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入。**Web**：打字/语音输入 → 同上流式 → 历史 + 记忆；`tts_reply_enabled=true` 时助手「说的话」自动 TTS 播报（嘴巴已接入）。耳朵（STT）/嘴巴（TTS）在 Web 端均已接入；player/body 未接入（仅影响 CLI 端播放与 Live2D 口型驱动）。
+当前可运行链路：**CLI**（`main.py`）：模拟输入（直接回车=继续说话）→ Mem0 检索 → 每轮截屏（可选）→ 提示词全在 assembler 组装 → Gemini 多模态流式 → 控制台 + 历史 + 长期记忆写入。**Web**（`start_web.sh`）：打字/语音输入 → 同上流式 → 历史 + 记忆；`tts_reply_enabled=true` 时助手「说的话」自动 TTS 播报。**Telegram**（`python -m src.telegram`）：文本/语音/图片 → STT 或 vision 压缩后 → 同主脑流程，按 chat_id 隔离历史与 Mem0；回复按语言/心理/场景转 HTML 后发送。耳朵（STT）/嘴巴（TTS）在 Web 端均已接入；player/body 未接入（仅影响 CLI 端播放与 Live2D 口型驱动）。

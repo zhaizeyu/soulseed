@@ -83,6 +83,26 @@ def _save_screenshot(image: Any, cfg: dict) -> None:
         logger.warning("保存截图失败 %s: %s", file_path, e)
 
 
+def prepare_image_for_turn(image: Any, *, save: bool = False) -> Any:
+    """
+    按「眼睛」配置处理图片：较长边缩放到 vision_max_longer_side，与 get_screen_for_turn 一致。
+    供 Telegram 发图等作为眼睛输入时复用，控制 token。若 save=True，按 vision_save_* 写入 data/vision。
+    返回处理后的 PIL.Image。
+    """
+    if image is None:
+        return None
+    cfg = get_config()
+    try:
+        max_side = int(cfg.get("vision_max_longer_side") or 0)
+    except (TypeError, ValueError):
+        max_side = 0
+    if max_side > 0:
+        image = _resize_longer_side(image, max_side)
+    if save:
+        _save_screenshot(image, cfg)
+    return image
+
+
 def get_screen_for_turn() -> Any:
     """
     根据 config 抓取并处理当前屏幕，供本回合主脑使用。
@@ -95,13 +115,7 @@ def get_screen_for_turn() -> Any:
     img = capture_screen()
     if img is None:
         return None
-    try:
-        max_side = int(cfg.get("vision_max_longer_side") or 0)
-    except (TypeError, ValueError):
-        max_side = 0
-    if max_side > 0:
-        img = _resize_longer_side(img, max_side)
-    _save_screenshot(img, cfg)
+    img = prepare_image_for_turn(img, save=True)
     return img
 
 

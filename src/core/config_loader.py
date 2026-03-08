@@ -23,6 +23,7 @@ def load_config() -> dict[str, Any]:
         import os
         load_dotenv(root / ".env")
         config["GEMINI_API_KEY"] = (os.getenv("GEMINI_API_KEY") or "").strip()
+        config["TELEGRAM_BOT_TOKEN"] = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
         config["VTS_PORT"] = int(os.getenv("VTS_PORT", "8001"))
     except ImportError:
         pass

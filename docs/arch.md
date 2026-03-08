@@ -1,6 +1,6 @@
 # 数字生命 MVP 架构设计文档 (基于 Gemini 多模态原生架构)
 
-**模型与 API**：主脑、长期记忆（Mem0）、语音转写（STT）均使用 **Google Gemini**，仅需配置 `GEMINI_API_KEY`，无 OpenAI 或其他厂商依赖。
+**模型与 API**：主脑、长期记忆（Mem0）、语音转写（STT）均使用 **Google Gemini**（统一通过 **google-genai** SDK），仅需配置 `GEMINI_API_KEY`，无 OpenAI 或其他厂商依赖。
 
 ## 📐 1. 项目目录结构总览
 
@@ -88,10 +88,11 @@ VedalAI_Project/
     │
     ├── telegram/           # === Telegram 模块 (与 main 解耦，可选) ===
     │   ├── __init__.py
-    │   ├── bot.py          # PTB Application、polling/webhook 启动
-    │   ├── handlers.py     # /start、/help、/clear、文本消息处理
+    │   ├── bot.py          # PTB Application、polling 启动
+    │   ├── handlers.py     # /start、/help、/clear、文本/语音/图片
     │   ├── service.py      # 按 chat_id 的单轮对话（历史 + 主脑 + Mem0 user_id 隔离）
-    │   ├── history.py      # 按 chat_id 的会话历史持久化 (data/telegram/chats/)
+    │   ├── history.py      # 按 chat_id 会话历史（全量存盘，读取最近 N 条）
+    │   ├── format_reply.py # 回复转 Telegram HTML（语言加粗、心理斜体）
     │   └── __main__.py     # 入口: python -m src.telegram
     │
     └── utils/              # === 通用工具库 ===
@@ -120,7 +121,7 @@ VedalAI_Project/
 * **核心职责**：单例模式的配置加载器。将 `config.yaml` 的业务配置和 `.env` 的机密凭证合并为一个全局可访问的配置对象。
 
 * **配置项摘要（config.yaml + .env）**
-  * **.env**：`GEMINI_API_KEY`（主脑、Mem0、语音转写 STT 均用此 Key，全为 Google 系列）。
+  * **.env**：`GEMINI_API_KEY`（主脑、Mem0、语音转写 STT 均用此 Key）；`TELEGRAM_BOT_TOKEN`（Telegram Bot 启用时必填）。
   * **调试**：`debug_log_prompt`（true=每次请求前将组装好的完整提示词打印到日志）。
   * **主脑**：`gemini_model`；`gemini_max_output_tokens`（单轮回复最大 token 数，默认 8192，过小易触发输出截断）。
   * **历史对话**：`chat_history_file`、`chat_history_max_entries`。
@@ -128,6 +129,7 @@ VedalAI_Project/
   * **日志**：`log_dir`、`log_file`。
   * **眼睛**：`vision_enabled`、`vision_max_longer_side`（先缩放再送主脑）；`vision_save_enabled`、`vision_save_dir`（截图存 data）、`vision_save_format`（jpg/png）、`vision_jpeg_quality`；**心跳检测**：`vision_heartbeat_enabled`、`vision_heartbeat_interval_sec`（如 30）、`vision_heartbeat_diff_threshold`（差异阈值 0~1）。
   * **感官/表达**：`vision_interval`、`tts_voice`、`tts_reply_enabled`（是否开启助手语音回复）、`vad_sensitivity`、`vts_host`、`vts_port`。
+  * **Telegram**：`telegram_enabled`、`telegram_max_history_entries`（每会话上下文条数；磁盘全量存储）、可选 `telegram_speaker_name`（回复中「说的话」前角色名，默认 Kurisu）、`telegram_chat_history_dir`。
 
 
 * **`logger.py`**
@@ -138,8 +140,8 @@ VedalAI_Project/
 ### B. 感官层 (`src/senses/`)
 
 * **`hearing.py` (耳朵)**
-* **核心职责**：语音转文本 (STT)，供 Web 与后续 CLI 使用。
-* **实现细节**：`speech_to_text(audio_bytes, filename)` 使用 **Google Gemini** 多模态（上传音频后转写），支持 webm/mp3/wav 等；与主脑共用 `GEMINI_API_KEY` 与 config 中的 `gemini_model`。未配置 Key 时返回空并打日志。**Web**：前端录音后 POST 到 `POST /api/speech-to-text`，后端调本函数返回 `{"text": "..."}`。CLI 端 VAD + 本地录音后调本函数（后续接入）。
+* **核心职责**：语音转文本 (STT)，供 Web、CLI、Telegram 使用。
+* **实现细节**：`speech_to_text(audio_bytes, filename)` 使用 **google-genai**（Gemini 多模态）转写，支持 webm/mp3/wav/ogg 等；与主脑共用 `GEMINI_API_KEY` 与 `gemini_model`。未配置 Key 时返回空并打日志。**Web**：前端录音后 POST 到 `POST /api/speech-to-text`；**Telegram**：用户发语音时下载为 bytes 后调本函数，转写结果作为用户输入。CLI 端 VAD + 本地录音后调本函数（后续接入）。
 
 
 * **`vision.py` (眼睛)**
@@ -160,7 +162,7 @@ VedalAI_Project/
 
 * **`conscious.py` (主脑 - Gemini 核心)**
 * **核心职责**：按 prompt_assembler 组装好的消息调用 Gemini 流式生成，**不在此注入任何提示词**。
-* **实现细节**：调用 `build_messages(...)`（含 `vision_image_attached`）得到消息列表，转为 Gemini Content 后，本回合发送内容为「组装好的 current_user_content + 可选 vision_image」；无 system_instruction，全部按顺序进 history。模型名、`gemini_max_output_tokens`（单轮输出上限，避免截断）等来自 `config.yaml`。
+* **实现细节**：使用 **google-genai**（`genai.Client`、`generate_content_stream`）。调用 `build_messages(...)`（含 `vision_image_attached`）得到消息列表，转为 `types.Content` 列表后，本回合发送「current_user_content + 可选 vision_image（PIL 转 JPEG bytes）」；无 system_instruction，全部按顺序进 history。模型名、`gemini_max_output_tokens`（单轮输出上限）等来自 `config.yaml`。
 
 * **`tools_registry.py` (原生工具箱)**
 * **核心职责**：提供供 Gemini 自动调用的扩展能力。
@@ -228,5 +230,6 @@ VedalAI_Project/
 
 * **设计文档**：详见 **`docs/telegram.md`**。
 * **核心职责**：基于 **python-telegram-bot** 对接 Telegram，使数字生命在 Telegram 中与用户对话；与 CLI/Web 解耦，**按 chat_id 隔离会话历史与 Mem0 user_id**。
-* **模块组成**：`bot.py`（PTB Application、polling/webhook）；`handlers.py`（/start、/help、/clear、文本消息）；`service.py`（按 chat_id 调用主脑与记忆）；`history.py`（按 chat_id 持久化历史至 `data/telegram/chats/`）。
-* **运行方式**：独立入口 `python -m src.telegram`；需配置 `.env` 中 `TELEGRAM_BOT_TOKEN` 及 `config.yaml` 中 `telegram_enabled`。
+* **模块组成**：`bot.py`（PTB Application、polling）；`handlers.py`（/start、/help、/clear、文本、语音、图片）；`service.py`（按 chat_id 调用主脑与记忆）；`history.py`（按 chat_id 持久化历史至 `data/telegram/chats/`，**全量存储**，读取时只取最近 N 条作上下文）；`format_reply.py`（将助手回复按场景/心理/说的话转为 Telegram HTML：**语言** `<b>角色名："内容"</b>`、**心理** `<i>…</i>`、场景纯文本；角色名由 config `telegram_speaker_name` 指定，默认 Kurisu）。
+* **输入**：文本直接送主脑；语音经 `hearing.speech_to_text` 转写后作为用户输入；图片下载后经 `vision.prepare_image_for_turn` 压缩（与眼睛同配置）再送主脑。
+* **运行方式**：独立入口 `python -m src.telegram`；需配置 `.env` 中 `TELEGRAM_BOT_TOKEN` 及 `config.yaml` 中 `telegram_enabled`；可选 `telegram_speaker_name`、`telegram_max_history_entries`、`telegram_chat_history_dir`。

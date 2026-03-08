@@ -51,6 +51,12 @@ web_host: "0.0.0.0"
 web_port: 8765
 web_reload: false
 
+# Telegram Bot（独立入口 python -m src.telegram）
+telegram_enabled: true
+telegram_max_history_entries: 20   # 每会话：磁盘全量保存；发给主脑的上下文只取最近 20 条消息（约 10 轮），与 Web/CLI 的 chat_history 逻辑一致
+# telegram_speaker_name: "Kurisu"  # 回复中「说的话」前的角色名，不填默认 Kurisu；可改为 "牧濑红莉栖" 等
+# telegram_chat_history_dir: "data/telegram/chats"  # 可选，默认 data/telegram/chats
+
 # VTube Studio
 vts_host: "127.0.0.1"
 vts_port: 8001

@@ -3,6 +3,9 @@ FastAPI 对话 API — 与 main.py 调度器解耦，仅依赖 ConversationServi
 提供流式 SSE 与可选非流式接口；CORS 开放供前端调用。
 Web 模式含眼睛心跳：后台定时截图对比，有变化则自动执行一轮主动说话并写入历史（前端轮询 /api/history 可见）。
 """
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*AiohttpClientSession.*")
+
 import asyncio
 import json
 from contextlib import asynccontextmanager

@@ -1,4 +1,7 @@
 """Web API 入口：python -m src.web 或 uvicorn src.web.server:app"""
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*AiohttpClientSession.*")
+
 import uvicorn
 from src.core.config_loader import get_config
 
