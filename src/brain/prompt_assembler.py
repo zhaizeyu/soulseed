@@ -4,8 +4,27 @@
 """
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+_WEEKDAY = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+
+def _get_current_time_readable() -> str:
+    """返回可读的当前时间，供 §6 环境感知注入，让数字生命有时间感。"""
+    now = datetime.now()
+    wd = _WEEKDAY[now.weekday()]
+    h, m = now.hour, now.minute
+    if h < 6:
+        period = "凌晨"
+    elif h < 12:
+        period = "上午"
+    elif h < 18:
+        period = "下午"
+    else:
+        period = "夜晚"
+    return f"当前时间：{now.year}年{now.month}月{now.day}日 {wd} {period}{h % 12 or 12}点{m:02d}分。"
 
 from src.utils.io_utils import load_persona
 
@@ -209,13 +228,13 @@ def build_messages(
         if content and role in ("user", "assistant"):
             messages.append({"role": role, "content": content})
 
-    # 6. 环境感知 (prompt.md §6)：屏幕截图说明 / 耳朵摘要；图片由调用方随本回合 user 消息传入
-    if vision_image_attached or (vision_audio_text and vision_audio_text.strip()):
-        messages.append({"role": "system", "content": "[Vision And Audio]"})
-        if vision_image_attached:
-            messages.append({"role": "system", "content": "附图视为当前看到的画面。"})
-        if vision_audio_text and vision_audio_text.strip():
-            messages.append({"role": "system", "content": vision_audio_text.strip()})
+    # 6. 环境感知 (prompt.md §6)：每次注入当前时间；若有截图/耳朵再追加说明，图片由调用方随本回合 user 消息传入
+    messages.append({"role": "system", "content": "[Vision And Audio]"})
+    messages.append({"role": "system", "content": _get_current_time_readable()})
+    if vision_image_attached:
+        messages.append({"role": "system", "content": "附图视为当前看到的画面。"})
+    if vision_audio_text and vision_audio_text.strip():
+        messages.append({"role": "system", "content": vision_audio_text.strip()})
 
     # 7. 用户当前回合 (prompt.md §7)：有输入则用输入，无输入则用「继续说话」占位，保证本回合有一条 user
     if (current_user_input or "").strip():
