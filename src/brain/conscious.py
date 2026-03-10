@@ -2,9 +2,11 @@
 主脑 — 封装 Gemini API（google-genai），处理多模态上下文与对话会话管理。
 按 prompt_assembler 的消息顺序逐条喂给大模型，不合并 system；Gemini 仅支持 user/model，
 故将 system 转为带 [System] 标记的 user + 空 model 以保持顺序。
+历史对话中带 image_path 的 user 消息会加载图片并作为多模态 Part 一并发送。
 """
 import io
 import json
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from src.core.config_loader import get_config
@@ -12,9 +14,33 @@ from src.core.logger import get_logger, get_log_path
 from src.brain.prompt_assembler import build_messages
 
 logger = get_logger(__name__)
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # Gemini 仅支持 user/model 交替，system 用此前缀标识且后接空 model 占位
 _SYSTEM_PREFIX = "[System]\n"
+
+
+def _min_safety_settings() -> list[Any]:
+    """返回 Gemini 安全限制为最低的 SafetySetting 列表（BLOCK_NONE），减少误拦。"""
+    try:
+        from google.genai import types
+        block_none = getattr(types.HarmBlockThreshold, "BLOCK_NONE", None)
+        if block_none is None:
+            block_none = getattr(types.HarmBlockThreshold, "OFF", None)
+        if block_none is None:
+            return []
+        categories = [
+            "HARM_CATEGORY_HARASSMENT",
+            "HARM_CATEGORY_HATE_SPEECH",
+            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+            "HARM_CATEGORY_DANGEROUS_CONTENT",
+        ]
+        return [
+            types.SafetySetting(category=getattr(types.HarmCategory, cat), threshold=block_none)
+            for cat in categories if hasattr(types.HarmCategory, cat)
+        ]
+    except Exception:
+        return []
 
 
 def _messages_to_genai_contents(messages: list[dict[str, Any]]) -> tuple[list[Any], str]:
@@ -47,9 +73,13 @@ def _messages_to_genai_contents(messages: list[dict[str, Any]]) -> tuple[list[An
             )
             contents.append(types.Content(role="model", parts=[types.Part.from_text(text="")]))
         elif role == "user":
-            contents.append(
-                types.Content(role="user", parts=[types.Part.from_text(text=content)])
-            )
+            parts_list: list[Any] = [types.Part.from_text(text=content)]
+            image_path = m.get("image_path")
+            if image_path:
+                img_part = _load_history_image_to_part(image_path)
+                if img_part is not None:
+                    parts_list.append(img_part)
+            contents.append(types.Content(role="user", parts=parts_list))
         elif role == "assistant":
             contents.append(
                 types.Content(role="model", parts=[types.Part.from_text(text=content)])
@@ -58,8 +88,24 @@ def _messages_to_genai_contents(messages: list[dict[str, Any]]) -> tuple[list[An
     return contents, current_user_text
 
 
-def _vision_image_to_part(vision_image: Any) -> Any:
-    """将 PIL.Image 转为 google.genai types.Part（JPEG bytes）。"""
+def _load_history_image_to_part(image_path: str) -> Any:
+    """从历史图片路径（相对项目根）加载并转为 genai Part；失败返回 None。"""
+    if not (image_path or "").strip():
+        return None
+    path = _PROJECT_ROOT / image_path
+    if not path.exists():
+        return None
+    try:
+        from PIL import Image
+        img = Image.open(path).convert("RGB")
+        return _vision_image_to_part(img)
+    except Exception as e:
+        logger.debug("加载历史图片失败 %s: %s", path, e)
+        return None
+
+
+def _vision_image_to_part(vision_image: Any, *, quality: int | None = None) -> Any:
+    """将 PIL.Image 转为 google.genai types.Part（JPEG bytes）。quality 来自 config vision_jpeg_quality，省 token 可调低。"""
     from google.genai import types
 
     if vision_image is None:
@@ -68,8 +114,14 @@ def _vision_image_to_part(vision_image: Any) -> Any:
         from PIL import Image
         if not isinstance(vision_image, Image.Image):
             return None
+        if quality is None:
+            config = get_config()
+            try:
+                quality = max(1, min(100, int(config.get("vision_jpeg_quality") or 72)))
+            except (TypeError, ValueError):
+                quality = 72
         buf = io.BytesIO()
-        vision_image.save(buf, format="JPEG", quality=85)
+        vision_image.save(buf, format="JPEG", quality=quality)
         return types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
     except Exception:
         return None
@@ -81,7 +133,7 @@ async def chat_stream(
     persona_name: str = "character",
     user_info: str | None = None,
     mem0_lines: list[str] | None = None,
-    chat_history: list[dict[str, str]] | None = None,
+    chat_history: list[dict[str, Any]] | None = None,
     vision_audio_text: str | None = None,
     vision_image: Any | None = None,
     use_defaults_for_missing: bool = False,
@@ -153,10 +205,14 @@ async def chat_stream(
     try:
         from google import genai
         client = genai.Client(api_key=api_key)
+        safety = _min_safety_settings()
+        config_kw: dict[str, Any] = {"max_output_tokens": max_output_tokens}
+        if safety:
+            config_kw["safety_settings"] = safety
         async for chunk in await client.aio.models.generate_content_stream(
             model=model_name,
             contents=all_contents,
-            config=types.GenerateContentConfig(max_output_tokens=max_output_tokens),
+            config=types.GenerateContentConfig(**config_kw),
         ):
             try:
                 if getattr(chunk, "text", None):

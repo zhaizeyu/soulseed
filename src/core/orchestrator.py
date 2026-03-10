@@ -49,8 +49,9 @@ class Orchestrator:
         user_input: str,
         vision_image_override: Any = None,
     ) -> None:
-        """执行一轮：主脑流式生成，打印并写入历史。入参封装为 UserTurnInput 便于后续扩展。"""
-        turn_input = UserTurnInput(text=user_input or "", images=None)
+        """执行一轮：主脑流式生成，打印并写入历史。入参封装为 UserTurnInput 便于后续扩展；带图时写入历史并带时间戳。"""
+        vision_image = vision_image_override if vision_image_override is not None else await self._get_vision_image()
+        turn_input = UserTurnInput(text=user_input or "", images=[vision_image] if vision_image else None)
         full_reply: list[str] = []
         try:
             async for chunk in run_one_turn_stream(
@@ -67,19 +68,15 @@ class Orchestrator:
             full_reply.append(f"[错误: {e}]")
         reply_text = "".join(full_reply).strip()
         user_text = turn_input.effective_text()
-        new_turns: list[dict[str, str]] = []
-        if user_text:
-            self._chat_history.append({"role": "user", "content": user_text})
-            new_turns.append({"role": "user", "content": user_text})
-        self._chat_history.append({"role": "assistant", "content": reply_text})
+        new_turns: list[dict[str, Any]] = []
+        if user_text or vision_image is not None:
+            user_turn: dict[str, Any] = {"role": "user", "content": user_text or ""}
+            if vision_image is not None:
+                user_turn["image"] = vision_image
+            new_turns.append(user_turn)
         new_turns.append({"role": "assistant", "content": reply_text})
         append_turns(new_turns)
-        try:
-            max_entries = max(1, int(self._config.get("chat_history_max_entries", 20)))
-        except (TypeError, ValueError):
-            max_entries = 20
-        if len(self._chat_history) > max_entries:
-            self._chat_history = self._chat_history[-max_entries:]
+        self._chat_history = load_history()
         if reply_text:
             await memory_module.add_background(user_text or None, reply_text, metadata=None, user_id="default")
 

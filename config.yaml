@@ -27,11 +27,11 @@ mem0_infer: true                               # true=只存 LLM 抽取的事实
 # 眼睛（屏幕截取与多模态）
 vision_enabled: false          # 是否每轮截屏并传入主脑
 vision_interval: 2.0              # 秒（后续定时刷新用）
-vision_max_longer_side: 1024      # 截图较长边上限（先缩放再送主脑，省 token）
+vision_max_longer_side: 768       # 较长边上限（先缩放再送主脑）。省 token 可改为 512
 vision_save_enabled: true         # 是否将每轮截图存到 data 目录
 vision_save_dir: "data/vision"    # 截图保存目录（相对项目根）
 vision_save_format: "jpg"         # 存盘格式：jpg 更小，png 无损
-vision_jpeg_quality: 85           # 存为 jpg 时的质量 (1-100)，兼顾体积与清晰度
+vision_jpeg_quality: 72           # jpg 质量 (1-100)，送主脑与存盘共用。省 token 可改为 60～70
 
 # 眼睛心跳检测：定时截图与上一张对比，有显著变化则触发主动说话
 vision_heartbeat_enabled: false    # 是否开启心跳检测

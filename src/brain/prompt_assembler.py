@@ -29,6 +29,18 @@ def _get_current_time_readable() -> str:
         period = "夜晚"
     return f"当前时间：{now.year}年{now.month}月{now.day}日 {wd} {period}{h % 12 or 12}点{m:02d}分。"
 
+
+def _format_timestamp_for_image(timestamp: str) -> str:
+    """将 ISO 或空的时间戳转为可读短格式，供历史图中 [图: 时间] 标记。"""
+    if not (timestamp or "").strip():
+        return ""
+    try:
+        ts = timestamp.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(ts)
+        return f"{dt.month}月{dt.day}日 {dt.hour}:{dt.minute:02d}"
+    except (ValueError, TypeError):
+        return (timestamp or "")[:16]
+
 from src.utils.io_utils import load_persona
 
 # 资源路径
@@ -94,7 +106,7 @@ def build_messages(
     persona_name: str = "character",
     user_info: str | None = None,
     mem0_lines: list[dict[str, Any]] | None = None,
-    chat_history: list[dict[str, str]] | None = None,
+    chat_history: list[dict[str, Any]] | None = None,
     vision_audio_text: str | None = None,
     vision_image_attached: bool = False,
     current_user_input: str = "",
@@ -205,19 +217,38 @@ def build_messages(
             formatted_line = f"{prefix}{line}{suffix}"
             messages.append({"role": "system", "content": formatted_line})
 
-    # 5. 历史对话 (prompt.md §5)
+    # 5. 历史对话 (prompt.md §5)：带图回合用 [图: 时间] 标记，并带 image_path 供主脑多模态注入
     messages.append({"role": "system", "content": "[Start Chat]"})
     for turn in chat_history:
         role = turn.get("role", "user")
+        if role not in ("user", "assistant"):
+            continue
         content = (turn.get("content") or "").strip()
-        if content and role in ("user", "assistant"):
-            messages.append({"role": role, "content": content})
+        image_path = turn.get("image_path")
+        if not content and not image_path:
+            continue
+        timestamp = turn.get("timestamp") or ""
+        if image_path and role == "user":
+            time_label = _format_timestamp_for_image(timestamp)
+            tag = "[图: " + (time_label or "历史") + "]"
+            content = (content + "\n" + tag).strip() if content else tag
+        msg: dict[str, Any] = {"role": role, "content": content}
+        if role == "user" and image_path:
+            msg["image_path"] = image_path
+        messages.append(msg)
 
     # 6. 环境感知 (prompt.md §6)：每次注入当前时间；若有截图/耳朵再追加说明，图片由调用方随本回合 user 消息传入
     messages.append({"role": "system", "content": "[Vision And Audio]"})
     messages.append({"role": "system", "content": _get_current_time_readable()})
     if vision_image_attached:
-        messages.append({"role": "system", "content": "附图视为当前看到的画面。"})
+        messages.append({"role": "system", "content": "紧接着的「用户当前回合」中的附图视为**当前**看到的画面；历史对话里带 [图: 时间] 的为过往某时刻的画面，勿与本回合附图混淆。"})
+    else:
+        # 本回合无图：禁止把「当前」当看见，但允许引用历史中的视觉记忆
+        messages.append({
+            "role": "system",
+            "content": "本回合没有新的视觉输入，你不能描述或假装看到「此刻」的用户、屏幕或周围环境。"
+            "历史对话和记忆里的过往画面你仍然可以回忆和引用，只是不要把它们说成是「现在看到的」。"
+        })
     if vision_audio_text and vision_audio_text.strip():
         messages.append({"role": "system", "content": vision_audio_text.strip()})
 

@@ -4,6 +4,7 @@
 提供 search() 与 add_background() 异步方法。
 """
 import asyncio
+import atexit
 import os
 import time
 from datetime import datetime
@@ -30,6 +31,25 @@ os.environ.setdefault("MEM0_DIR", str(_mem0_dir))
 
 _MEMORY: Optional[object] = None  # mem0.Memory 实例，未启用时为 None
 _DEFAULT_USER_ID = "default"
+
+
+def close_memory() -> None:
+    """在进程退出前关闭 Mem0 持有的 Qdrant 客户端，避免解释器关闭时 __del__ 中 import 报错。"""
+    global _MEMORY
+    if _MEMORY is None:
+        return
+    try:
+        vs = getattr(_MEMORY, "vector_store", None)
+        if vs is not None:
+            client = getattr(vs, "client", None)
+            if client is not None and hasattr(client, "close"):
+                client.close()
+    except Exception:
+        pass
+    _MEMORY = None
+
+
+atexit.register(close_memory)
 
 
 def _get_memory():

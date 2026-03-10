@@ -32,7 +32,8 @@ SoulSeed_Project/
 ├── scripts/                # [脚本]
 │   ├── start_web.sh        # 一键启动 Web 后端 + 前端（8765 + 5173）
 │   ├── stop_web.sh         # 一键停止后端与前端（按端口清理）
-│   └── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆及元数据 (需先退出主程序)
+│   ├── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆及元数据 (需先退出主程序)
+│   └── inspect_last_prompt.py  # 根据存储的历史/Mem0/配置还原最后一次完整提示词 (--session 可指定 default 或 tg_<chat_id>)
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
@@ -162,7 +163,7 @@ SoulSeed_Project/
 
 * **`prompt_assembler.py` (提示词组装)**
 * **核心职责**：**所有面向模型的提示词仅在此组装**（主脑不再注入）。按 prompt.md §1–§8 顺序：Jailbreak → 角色卡 → 示例 → Mem0 → 历史 → §6 环境感知 → §7 用户当前回合 → Task。
-* **实现细节**：**§4 潜意识记忆**：`mem0_lines` 为 `List[Dict]`，每项含 `memory`（正文）与可选 `metadata`。若有 `timestamp`/`time_context` 会组装成可读时间前缀（如「(3月7日 夜晚)」）；若有 `user_emotion`/`ai_emotion`/`importance` 会加情绪前缀与「重要记忆」后缀，便于主脑理解记忆的「温度」。§6 仅在 `vision_image_attached` 或 `vision_audio_text` 非空时插入；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
+* **实现细节**：**§4 潜意识记忆**：`mem0_lines` 为 `List[Dict]`，每项含 `memory`（正文）与可选 `metadata`。若有 `timestamp`/`time_context` 会组装成可读时间前缀（如「(3月7日 夜晚)」）；若有 `user_emotion`/`ai_emotion`/`importance` 会加情绪前缀与「重要记忆」后缀，便于主脑理解记忆的「温度」。§6 每次注入当前时间；有本回合附图时说明「本回合附图=当前画面、历史 [图: 时间]=过往画面」，**本回合无图时**说明不能描述「此刻」所见、但可回忆/引用历史中带 [图: 时间] 的视觉记忆；§7 有输入则用输入，**无输入则插入「(请根据上文以角色身份继续说话。)」**，保证本回合必有一条 user。`vision_audio_text` 为占位参数（当前主流程恒空，仅接入耳朵后有内容）。
 
 * **`conscious.py` (主脑 - Gemini 核心)**
 * **核心职责**：按 prompt_assembler 组装好的消息调用 Gemini 流式生成，**不在此注入任何提示词**。
@@ -180,7 +181,7 @@ SoulSeed_Project/
   * **`search(query, top_k, user_id=None)`**：按语义检索相关记忆，返回 `List[Dict]`，每项含 `memory`、`metadata`、`score`。**user_id** 用于多端/多用户隔离（不传则 `"default"`）；query 为空时返回 []，不调 Mem0。
   * **`add_background(user_input, reply_text, metadata=None, user_id=None)`**：每轮结束后写入记忆。**user_id** 同上；**metadata** 可选含 `user_emotion`、`ai_emotion`、`importance`、`memory_type` 等，写入时自动附加 `timestamp` 与 `time_context`。由 **`mem0_infer`** 控制：`true` 时抽事实，`false` 或 user 为空时存原文；非法 JSON 时降级存原文。
   * 未配置 `GEMINI_API_KEY` 或未安装 `mem0ai`/`google-genai` 时自动降级。
-  * 查看已存记忆及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`（会打印每条记忆的 Metadata 如 time_context、importance 等）。
+  * 查看已存记忆及元数据：先退出主程序，再运行 `python scripts/inspect_mem0_vectors.py`（会打印每条记忆的 Metadata 如 time_context、importance 等）。查看最后一次发给模型的完整提示词：`python scripts/inspect_last_prompt.py [--session default|tg_<chat_id>] [--out last_prompt.json]`。
 
 
 

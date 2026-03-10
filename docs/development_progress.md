@@ -83,7 +83,7 @@
 ### 阶段 5：眼睛接入与视听摘要 — ✅ 已完成（多模态截图 + 心跳检测）
 - **vision**：`get_screen_for_turn()` 按 config 截屏、缩放、可选存 `data/vision/`；**心跳检测**：`check_heartbeat()` 每 N 秒（config `vision_heartbeat_interval_sec`，如 30）截图与上一帧 64×64 灰度缩略图对比，差异超过 `vision_heartbeat_diff_threshold` 则返回当前帧，供调度器触发主动说话。
 - **orchestrator**：每轮取截图传入主脑；**直接回车**也执行一轮（继续说话）；后台心跳任务每 N 秒检测，有变化则向队列注入「画面发生了你感兴趣的变化…」回合并带当前截图执行一轮。
-- **prompt_assembler**：§6 在 `vision_image_attached` 时插入「本回合附屏幕截图…」说明；**所有提示词仅在此组装**，conscious 不注入。
+- **prompt_assembler**：§6 有本回合附图时说明本回合附图=当前画面、历史 [图: 时间]=过往；无图时说明不能描述「此刻」所见、但可回忆/引用历史视觉；**所有提示词仅在此组装**，conscious 不注入。
 - **conscious**：仅发送组装好的 current_user_content + 可选 vision_image。
 
 ### 阶段 6：身体（Cubism Web SDK + 后端参数）

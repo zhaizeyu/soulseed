@@ -40,7 +40,8 @@ async def run_turn(chat_id: int | str, turn_input: UserTurnInput) -> str:
         full_reply += chunk
 
     full_reply = (full_reply or "").strip()
-    tg_history.append(chat_id, user_text, full_reply)
+    user_image = turn_input.images[0] if turn_input.images else None
+    tg_history.append(chat_id, user_text, full_reply, user_image=user_image)
     await memory_module.add_background(
         user_input=user_text,
         reply_text=full_reply,
