@@ -14,6 +14,7 @@ SoulSeed_Project/
 ├── docs/                   # [文档] 架构与提示词说明
 │   ├── arch.md             # 本架构设计文档
 │   ├── development_progress.md  # 开发阶段与进度
+│   ├── personality_optimization_roadmap.md  # 人格与长期一致优化路线（关系/情绪/Reflection/Agent Loop）
 │   ├── telegram.md         # Telegram 对接功能与架构设计 (python-telegram-bot)
 │   ├── prompt.md           # 提示词组装顺序说明
 │   ├── prompt.json         # 组装示例/参考

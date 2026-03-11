@@ -100,6 +100,13 @@
 - 统一**插嘴**逻辑：新语音触发时 interrupt + 重新组 prompt 并请求主脑。
 - 错误重试、超时、日志标签（如 [AUDIO]、[VISION]）完善；可选 api_client 统一 HTTP。
 
+### 人格与长期一致优化（规划）
+- **完整路线与优先级**：见 [docs/personality_optimization_roadmap.md](personality_optimization_roadmap.md)。
+- **P0（状态与提示词）**：`state_manager.py` + `data/state/relationships.json`；羁绊值 intimacy 每轮隐式更新；2–3 档关系描述注入 prompt_assembler；当前情绪 state + 衰减规则 + §6 注入；ToM 一句（内心先推断再回应）；task/示例口吻与拒绝边界。
+- **P1（记忆坍缩）**：`reflection.py` 按 session 总结短期对话 → 高 importance 写 Mem0；定时触发；可选 Reflection 输出 intimacy_delta 回写关系。
+- **P2（主动意图）**：`agent_loop.py` 定时唤醒 + 内部 LLM 意图 + 可选主动发一条消息；social_battery 简单公式。
+- **目标**：长期一致（Reflection）、关系演变（Relationship）、有活感（Agent Loop）、有温度（Emotion+ToM）、口吻稳定（task/示例/边界）。
+
 ### 建议补充：prompt_assembler 格式规则 (§7.5)
 - 在 §8 输出风格限制之前插入 **格式规则** 提示词，约束模型输出格式：
   - 场景：`*场景*`
