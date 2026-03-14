@@ -15,6 +15,7 @@ SoulSeed_Project/
 │   ├── arch.md             # 本架构设计文档
 │   ├── development_progress.md  # 开发阶段与进度
 │   ├── personality_optimization_roadmap.md  # 人格与长期一致优化路线（关系/情绪/Reflection/Agent Loop）
+│   ├── design_hindsight_memory.md           # 使用 Hindsight 作为长期记忆底层的设计与接入方案
 │   ├── telegram.md         # Telegram 对接功能与架构设计 (python-telegram-bot)
 │   ├── prompt.md           # 提示词组装顺序说明
 │   ├── prompt.json         # 组装示例/参考
@@ -34,7 +35,8 @@ SoulSeed_Project/
 │   ├── start_web.sh        # 一键启动 Web 后端 + 前端（8765 + 5173）
 │   ├── stop_web.sh         # 一键停止后端与前端（按端口清理）
 │   ├── inspect_mem0_vectors.py  # 查看向量库中已存储的记忆及元数据 (需先退出主程序)
-│   └── inspect_last_prompt.py  # 根据存储的历史/Mem0/配置还原最后一次完整提示词 (--session 可指定 default 或 tg_<chat_id>)
+│   ├── inspect_last_prompt.py  # 根据存储的历史/Mem0/配置还原最后一次完整提示词 (--session 可指定 default 或 tg_<chat_id>)
+│   └── test_hindsight_memory.py  # 测试 Hindsight 记忆存取与记忆坍缩 (需 Docker 部署 Hindsight 且 pip install hindsight-client)
 │
 ├── assets/                 # [资源文件]
 │   ├── personas/           # 人设与提示词配置
