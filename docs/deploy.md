@@ -13,7 +13,7 @@
    - `sudo update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1` 让系统提供 `python`。
 
 2. **`.env`**（项目根目录）  
-   - 必填：`GEMINI_API_KEY=你的密钥`  
+   - 必填：`LITELLM_API_KEY=你的密钥`、`OPENAI_BASE_URL=你的网关地址`、`CHAT_MODEL=模型名`  
    - 跑 Telegram Bot 时：`TELEGRAM_BOT_TOKEN=你的 Bot Token`
 
 3. **config.yaml**  

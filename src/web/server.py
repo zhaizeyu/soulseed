@@ -229,7 +229,7 @@ async def speech_to_text_api(audio: UploadFile = File(...)):
     """
     语音转文本：上传一段音频（webm/mp3/wav 等），返回识别文本。
     请求：multipart/form-data，字段名 audio，文件为浏览器 MediaRecorder 等录制的音频。
-    响应：{"text": "识别结果"}，使用 Gemini 转写（与主脑共用 GEMINI_API_KEY）；失败或未配置时 text 可为空。
+    响应：{"text": "识别结果"}，经 llm-gateway（与主脑同一网关与 VISION_TO_TEXT_MODEL）；失败或未配置时 text 可为空。
     """
     try:
         body = await audio.read()

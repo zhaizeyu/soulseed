@@ -11,13 +11,14 @@ chat_history_max_entries: 20
 # 调试：开启后在每次发送给大模型前将组装好的完整提示词打印到日志 (logs/soulseed.log)
 debug_log_prompt: false
 
-# 主脑 (Gemini)
-gemini_model: "gemini-3-flash-preview"  # 或 gemini-1.5-flash、gemini-2.0-flash-exp
-gemini_max_output_tokens: 8192         # 单轮回复最大 token 数，过小会导致输出被截断并触发「无有效 Part」告警
+# 注入到提示词「环境感知」的墙钟时区（IANA，如 Asia/Shanghai）。服务器为 UTC 时务必设置，否则本地时间会与用户所在地不一致
+app_timezone: "Asia/Shanghai"
 
-# 长期记忆 (Mem0，全用 Gemini)
-mem0_embedder_model: "gemini-embedding-001"   # 嵌入模型
-mem0_llm_model: "gemini-3-flash-preview"      # 记忆提取用 LLM
+# 主脑（LiteLLM + OpenAI-compatible 网关；模型名以 .env 的 CHAT_MODEL 为准，此处为无 .env 时的默认）
+CHAT_MODEL: "deepseek-chat"
+gemini_max_output_tokens: 8192         # 单轮回复最大 token 数
+
+# 长期记忆（Mem0，嵌入与 LLM 均走网关，模型名同 .env 的 EMBEDDING_MODEL / CHAT_MODEL）
 mem0_search_limit: 5                          # 每轮检索条数
 mem0_embedding_dims: 768                      # 嵌入维度 (768/1536/3072)
 mem0_llm_temperature: 0.2                     # 记忆提取温度

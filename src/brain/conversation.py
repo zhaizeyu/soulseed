@@ -19,8 +19,6 @@ async def run_one_turn_stream(
     turn_input: UserTurnInput,
     chat_history: list[dict[str, str]],
     *,
-    persona_name: str = "character",
-    user_info: str | None = None,
     mem0_user_id: str = "default",
     vision_image_override: Any = None,
     get_vision_image: GetVisionImage | None = None,
@@ -46,16 +44,11 @@ async def run_one_turn_stream(
     else:
         vision_image = turn_input.images[0] if turn_input.images else None
 
-    use_defaults_for_missing = len(chat_history) == 0
-
     async for chunk in conscious.chat_stream(
         current_user_input=query,
-        persona_name=persona_name,
-        user_info=user_info,
         mem0_lines=mem0_lines or None,
         chat_history=chat_history,
         vision_audio_text=vision_audio_text,
         vision_image=vision_image,
-        use_defaults_for_missing=use_defaults_for_missing,
     ):
         yield chunk

@@ -69,8 +69,6 @@ def main() -> int:
 
     from src.brain.chat_history_store import load_history
     from src.brain.prompt_assembler import build_messages
-    from src.core.config_loader import get_config
-
     history = load_history(session_id)
     if not history:
         print(f"[{session_label}] 无历史记录，无法还原提示词。", file=sys.stderr)
@@ -93,20 +91,12 @@ def main() -> int:
     query = current_user_input or "(无文字)"
     mem0_lines = asyncio.run(_get_mem0_lines(query, session_id))
 
-    cfg = get_config()
-    persona_name = (cfg.get("persona_name") or "character").strip()
-    user_info = None  # 使用 prompt_assembler 内部从 user_info.json 加载的默认
-
-    use_defaults = len(history_for_build) == 0
     messages = build_messages(
-        persona_name=persona_name,
-        user_info=user_info,
         mem0_lines=mem0_lines or None,
         chat_history=history_for_build,
         vision_audio_text=None,
         vision_image_attached=vision_image_attached,
         current_user_input=current_user_input,
-        use_defaults_for_missing=use_defaults,
     )
 
     out = json.dumps(messages, ensure_ascii=False, indent=2)

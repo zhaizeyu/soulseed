@@ -1,95 +1,26 @@
 """
-主脑 — 封装 Gemini API（google-genai），处理多模态上下文与对话会话管理。
-按 prompt_assembler 的消息顺序逐条喂给大模型，不合并 system；Gemini 仅支持 user/model，
-故将 system 转为带 [System] 标记的 user + 空 model 以保持顺序。
-历史对话中带 image_path 的 user 消息会加载图片并作为多模态 Part 一并发送。
+主脑 — 通过 llm-gateway 统一调用大模型（LiteLLM + Langfuse）。
+处理对话会话、多模态历史与系统提示词注入。
 """
-import io
 import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from src.core.config_loader import get_config
 from src.core.logger import get_logger, get_log_path
-from src.brain.prompt_assembler import build_messages
+from src.llm_gateway import (
+    build_image_content_part,
+    get_chat_model_name,
+    get_gateway_api_key,
+    stream_chat,
+)
+from src.brain.prompt_assembler import build_messages, load_system_prompt
 
 logger = get_logger(__name__)
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-# Gemini 仅支持 user/model 交替，system 用此前缀标识且后接空 model 占位
-_SYSTEM_PREFIX = "[System]\n"
-
-
-def _min_safety_settings() -> list[Any]:
-    """返回 Gemini 安全限制为最低的 SafetySetting 列表（BLOCK_NONE），减少误拦。"""
-    try:
-        from google.genai import types
-        block_none = getattr(types.HarmBlockThreshold, "BLOCK_NONE", None)
-        if block_none is None:
-            block_none = getattr(types.HarmBlockThreshold, "OFF", None)
-        if block_none is None:
-            return []
-        categories = [
-            "HARM_CATEGORY_HARASSMENT",
-            "HARM_CATEGORY_HATE_SPEECH",
-            "HARM_CATEGORY_SEXUALLY_EXPLICIT",
-            "HARM_CATEGORY_DANGEROUS_CONTENT",
-        ]
-        return [
-            types.SafetySetting(category=getattr(types.HarmCategory, cat), threshold=block_none)
-            for cat in categories if hasattr(types.HarmCategory, cat)
-        ]
-    except Exception:
-        return []
-
-
-def _messages_to_genai_contents(messages: list[dict[str, Any]]) -> tuple[list[Any], str]:
-    """
-    将 messages 转为 google.genai types.Content 列表与当前 user 文本。
-    返回 (history_contents, current_user_text)。
-    """
-    from google.genai import types
-
-    last_user_idx: int | None = None
-    for i in range(len(messages) - 1, -1, -1):
-        if messages[i].get("role") == "user":
-            last_user_idx = i
-            break
-
-    contents: list[Any] = []
-    current_user_text = ""
-    for i, m in enumerate(messages):
-        role = m.get("role", "")
-        content = (m.get("content") or "").strip()
-        if role == "user" and i == last_user_idx:
-            current_user_text = content
-            continue
-        if role == "system":
-            contents.append(
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=_SYSTEM_PREFIX + content)],
-                )
-            )
-            contents.append(types.Content(role="model", parts=[types.Part.from_text(text="")]))
-        elif role == "user":
-            parts_list: list[Any] = [types.Part.from_text(text=content)]
-            image_path = m.get("image_path")
-            if image_path:
-                img_part = _load_history_image_to_part(image_path)
-                if img_part is not None:
-                    parts_list.append(img_part)
-            contents.append(types.Content(role="user", parts=parts_list))
-        elif role == "assistant":
-            contents.append(
-                types.Content(role="model", parts=[types.Part.from_text(text=content)])
-            )
-
-    return contents, current_user_text
-
-
-def _load_history_image_to_part(image_path: str) -> Any:
-    """从历史图片路径（相对项目根）加载并转为 genai Part；失败返回 None。"""
+def _load_history_image_to_part(image_path: str) -> dict[str, Any] | None:
+    """从历史图片路径（相对项目根）加载并转为 image_url part；失败返回 None。"""
     if not (image_path or "").strip():
         return None
     path = _PROJECT_ROOT / image_path
@@ -97,6 +28,7 @@ def _load_history_image_to_part(image_path: str) -> Any:
         return None
     try:
         from PIL import Image
+
         img = Image.open(path).convert("RGB")
         return _vision_image_to_part(img)
     except Exception as e:
@@ -104,81 +36,79 @@ def _load_history_image_to_part(image_path: str) -> Any:
         return None
 
 
-def _vision_image_to_part(vision_image: Any, *, quality: int | None = None) -> Any:
-    """将 PIL.Image 转为 google.genai types.Part（JPEG bytes）。quality 来自 config vision_jpeg_quality，省 token 可调低。"""
-    from google.genai import types
-
+def _vision_image_to_part(vision_image: Any, *, quality: int | None = None) -> dict[str, Any] | None:
+    """将 PIL.Image 转为 OpenAI 兼容 image_url part。"""
     if vision_image is None:
         return None
     try:
-        from PIL import Image
-        if not isinstance(vision_image, Image.Image):
-            return None
         if quality is None:
             config = get_config()
             try:
                 quality = max(1, min(100, int(config.get("vision_jpeg_quality") or 72)))
             except (TypeError, ValueError):
                 quality = 72
-        buf = io.BytesIO()
-        vision_image.save(buf, format="JPEG", quality=quality)
-        return types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg")
+        return build_image_content_part(vision_image, quality=quality)
     except Exception:
         return None
+
+
+def _messages_to_litellm_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """将内部消息结构转为 LiteLLM/OpenAI 兼容 messages。"""
+    out: list[dict[str, Any]] = []
+    for m in messages:
+        role = m.get("role", "")
+        content = (m.get("content") or "").strip()
+        if role == "assistant":
+            out.append({"role": "assistant", "content": content})
+            continue
+        if role == "system":
+            out.append({"role": "system", "content": content})
+            continue
+        if role == "user":
+            parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+            image_path = m.get("image_path")
+            if image_path:
+                img_part = _load_history_image_to_part(image_path)
+                if img_part is not None:
+                    parts.append(img_part)
+            out.append({"role": "user", "content": parts if len(parts) > 1 else content})
+    return out
 
 
 async def chat_stream(
     current_user_input: str,
     *,
-    persona_name: str = "character",
-    user_info: str | None = None,
-    mem0_lines: list[str] | None = None,
+    mem0_lines: list[dict[str, Any]] | None = None,
     chat_history: list[dict[str, Any]] | None = None,
     vision_audio_text: str | None = None,
     vision_image: Any | None = None,
-    use_defaults_for_missing: bool = False,
 ) -> AsyncIterator[str]:
-    """
-    接收当前用户输入与可选上下文，组装 prompt 后调用 Gemini（google-genai）流式生成，yield 文本片段。
-    调用方负责维护 chat_history（每轮结束后追加 user 与 assistant 的 content）。
-    """
+    """接收当前回合上下文，组装后通过 llm-gateway 流式生成文本。"""
     config = get_config()
-    api_key = (config.get("GEMINI_API_KEY") or "").strip()
+    api_key = get_gateway_api_key()
     if not api_key:
-        logger.warning("GEMINI_API_KEY 未配置，将跳过真实调用")
-        yield "[未配置 GEMINI_API_KEY]"
+        logger.warning("LITELLM_API_KEY 未配置，将跳过真实调用")
+        yield "[未配置 LITELLM_API_KEY]"
+        return
+
+    system_text = load_system_prompt()
+    if not system_text:
+        logger.warning("系统提示词为空：请配置 Langfuse 与 assets/prompts/langfuse_prompts.json")
+        yield "[系统提示词未就绪：请检查 Langfuse 与 langfuse_prompts.json]"
         return
 
     messages = build_messages(
-        persona_name=persona_name,
-        user_info=user_info,
         mem0_lines=mem0_lines,
         chat_history=chat_history,
         vision_audio_text=vision_audio_text,
         vision_image_attached=(vision_image is not None),
         current_user_input=current_user_input,
-        use_defaults_for_missing=use_defaults_for_missing,
     )
 
-    try:
-        history_contents, current_user_text = _messages_to_genai_contents(messages)
-    except ImportError as e:
-        logger.error("未安装 google-genai: %s", e)
-        yield "[请安装: pip install google-genai]"
-        return
-
-    if not current_user_text and not history_contents:
+    llm_messages = _messages_to_litellm_messages(messages)
+    if not llm_messages:
         yield ""
         return
-
-    from google.genai import types
-
-    image_part = _vision_image_to_part(vision_image)
-    user_parts: list[Any] = [types.Part.from_text(text=current_user_text or "")]
-    if image_part is not None:
-        user_parts.append(image_part)
-    current_content = types.Content(role="user", parts=user_parts)
-    all_contents = history_contents + [current_content]
 
     # 调试：将组装好的完整提示词打印到日志（config debug_log_prompt=true）
     if config.get("debug_log_prompt"):
@@ -191,7 +121,7 @@ async def chat_stream(
         except Exception as e:
             logger.warning("[主脑] 打印组装提示词失败: %s", e)
 
-    model_name = (config.get("gemini_model") or config.get("GEMINI_MODEL") or "gemini-2.0-flash").strip()
+    model_name = get_chat_model_name()
     if model_name.startswith("models/"):
         model_name = model_name.replace("models/", "", 1)
 
@@ -203,34 +133,39 @@ async def chat_stream(
             pass
 
     try:
-        from google import genai
-        client = genai.Client(api_key=api_key)
-        safety = _min_safety_settings()
-        config_kw: dict[str, Any] = {"max_output_tokens": max_output_tokens}
-        if safety:
-            config_kw["safety_settings"] = safety
-        async for chunk in await client.aio.models.generate_content_stream(
-            model=model_name,
-            contents=all_contents,
-            config=types.GenerateContentConfig(**config_kw),
+        system_instruction = system_text
+
+        if vision_image is not None and llm_messages and llm_messages[-1].get("role") == "user":
+            tail = llm_messages[-1]
+            image_part = _vision_image_to_part(vision_image)
+            if image_part is not None:
+                if isinstance(tail.get("content"), list):
+                    tail["content"].append(image_part)
+                else:
+                    tail["content"] = [
+                        {"type": "text", "text": str(tail.get("content", ""))},
+                        image_part,
+                    ]
+
+        async for chunk in stream_chat(
+            model_name=model_name,
+            api_key=api_key,
+            messages=llm_messages,
+            system_instruction=system_instruction,
+            max_output_tokens=max_output_tokens,
+            trace_name="brain_chat_stream",
         ):
-            try:
-                if getattr(chunk, "text", None):
-                    yield chunk.text
-            except (ValueError, AttributeError):
-                logger.warning(
-                    "[主脑] 流式返回无有效 Part，输出已截断（可能原因：安全/引用过滤，或回复过长触及 gemini_max_output_tokens 上限）"
-                )
-    except ImportError as e:
-        logger.error("未安装 google-genai: %s", e)
-        yield "[请安装: pip install google-genai]"
+            yield chunk
+    except RuntimeError as e:
+        logger.error("llm-gateway 初始化失败: %s", e)
+        yield "[请安装: pip install litellm langfuse]"
     except Exception as e:
-        logger.exception("Gemini 流式调用异常: %s", e)
+        logger.exception("llm-gateway 流式调用异常: %s", e)
         err_msg = str(e).strip()
-        if "API key not valid" in err_msg or "API_KEY_INVALID" in err_msg or "401" in err_msg:
+        if "API key" in err_msg or "401" in err_msg or "invalid_api_key" in err_msg.lower():
             yield (
-                "[Gemini API Key 无效] 请检查 .env 中的 GEMINI_API_KEY："
-                " 在 https://aistudio.google.com/apikey 申请并启用 Generative Language API，"
+                "[模型 API Key 无效] 请检查 .env 中的 LITELLM_API_KEY："
+                " 在对应平台申请并启用模型服务，"
                 f" 确保 Key 无多余空格、未过期。详细错误已写入 {get_log_path()}"
             )
         else:

@@ -1,10 +1,14 @@
 """
 耳朵 — 语音转文本 (STT)，供 Web/CLI/Telegram 使用。
-使用 Google Gemini（google-genai）多模态能力：上传音频后由 Gemini 转写为文字。
+统一经 llm-gateway 调用模型转写音频（LiteLLM + Langfuse）。
 """
 import os
-from src.core.config_loader import get_config
 from src.core.logger import get_logger
+from src.llm_gateway import (
+    get_gateway_api_key,
+    get_stt_model_name,
+    speech_to_text as gateway_speech_to_text,
+)
 
 logger = get_logger(__name__)
 
@@ -26,46 +30,35 @@ def _mime_for_filename(filename: str) -> str:
 
 def speech_to_text(audio_bytes: bytes, filename: str = "audio.webm") -> str:
     """
-    将音频转为文本，使用 Google Gemini（google-genai）多模态语音转写。
+    将音频转为文本，统一走 llm-gateway。
     支持常见格式：webm, mp3, wav, m4a, ogg 等。
-    未配置 GEMINI_API_KEY 或调用失败时返回空字符串并打日志。
+    未配置 LITELLM_API_KEY 或调用失败时返回空字符串并打日志。
     """
     if not audio_bytes:
         return ""
-    api_key = (get_config().get("GEMINI_API_KEY") or "").strip()
+    api_key = get_gateway_api_key()
     if not api_key:
-        logger.warning("GEMINI_API_KEY 未配置，语音识别跳过")
+        logger.warning("LITELLM_API_KEY 未配置，语音识别跳过")
         return ""
     mime = _mime_for_filename(filename)
-    model_name = (
-        get_config().get("gemini_model") or get_config().get("GEMINI_MODEL") or "gemini-2.0-flash"
-    ).strip()
+    model_name = get_stt_model_name()
     if model_name.startswith("models/"):
         model_name = model_name.replace("models/", "", 1)
 
     try:
-        from google import genai
-        from google.genai import types
-    except ImportError:
-        logger.warning("未安装 google-genai，语音识别不可用。pip install google-genai")
-        return ""
-
-    try:
-        client = genai.Client(api_key=api_key)
-        contents = [
-            types.Part.from_text(
-                text="将这段音频转写成文字，只输出转写结果，不要其他说明或标点以外的内容。"
-            ),
-            types.Part.from_bytes(data=audio_bytes, mime_type=mime),
-        ]
-        response = client.models.generate_content(
-            model=model_name,
-            contents=contents,
+        text = gateway_speech_to_text(
+            model_name=model_name,
+            api_key=api_key,
+            audio_bytes=audio_bytes,
+            audio_mime=mime,
+            trace_name="hearing_speech_to_text",
         )
-        text = (getattr(response, "text", None) or "").strip()
         if text:
             logger.debug("[HEARING] 识别: %s", text[:80] + "..." if len(text) > 80 else text)
         return text
+    except RuntimeError as e:
+        logger.warning("llm-gateway 未就绪: %s", e)
+        return ""
     except Exception as e:
-        logger.warning("Gemini 语音转写异常: %s", e, exc_info=True)
+        logger.warning("llm-gateway 语音转写异常: %s", e, exc_info=True)
         return ""

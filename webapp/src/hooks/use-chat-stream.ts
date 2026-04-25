@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "";
@@ -12,12 +12,16 @@ export function useChatStream() {
   const [loading, setLoading] = useState(false);
   const [streamingTurn, setStreamingTurn] = useState<StreamingTurn | null>(null);
   const queryClient = useQueryClient();
+  /** 防止连点发送或 StrictMode 下的重入导致两条请求、两条占位 */
+  const inFlightRef = useRef(false);
 
   const sendMessage = useCallback(
     async (input: string, currentLength: number) => {
+      if (inFlightRef.current) return;
       const userContent = input.trim() || "(继续说话)";
-      if (!input.trim() && currentLength === 0 && !streamingTurn) return;
+      if (!input.trim() && currentLength === 0) return;
 
+      inFlightRef.current = true;
       setLoading(true);
       setStreamingTurn({
         userMessage: input.trim() ? userContent : "",
@@ -63,6 +67,8 @@ export function useChatStream() {
             }
           }
         }
+        // 必须先结束「流式占位」，再拉历史；否则 messages 已含本轮而 streamingTurn 仍在，会重复渲染两条
+        setStreamingTurn(null);
         await queryClient.invalidateQueries({ queryKey: ["chat", "history"] });
       } catch (e) {
         setStreamingTurn((prev) =>
@@ -73,9 +79,10 @@ export function useChatStream() {
       } finally {
         setStreamingTurn(null);
         setLoading(false);
+        inFlightRef.current = false;
       }
     },
-    [streamingTurn, queryClient]
+    [queryClient]
   );
 
   return { sendMessage, loading, streamingTurn };

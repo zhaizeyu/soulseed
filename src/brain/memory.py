@@ -1,6 +1,6 @@
 """
 海马体 — 封装 Mem0，负责长期记忆的异步写入与检索。
-使用 Google Gemini 作为 embedder 与 LLM，与主脑、语音转写统一为 Google 系列。
+通过 OpenAI 兼容网关（LiteLLM Base URL）驱动 Mem0 的 embedder 与 LLM。
 提供 search() 与 add_background() 异步方法。
 """
 import asyncio
@@ -13,6 +13,11 @@ from typing import List, Optional, Dict, Any
 
 from src.core.config_loader import get_config
 from src.core.logger import get_logger
+from src.llm_gateway import (
+    build_mem0_openai_config,
+    get_gateway_api_base,
+    get_gateway_api_key,
+)
 
 logger = get_logger(__name__)
 
@@ -31,6 +36,11 @@ os.environ.setdefault("MEM0_DIR", str(_mem0_dir))
 
 _MEMORY: Optional[object] = None  # mem0.Memory 实例，未启用时为 None
 _DEFAULT_USER_ID = "default"
+_FACTS_CHINESE_SYSTEM_PROMPT = (
+    "你是长期记忆抽取器。"
+    "请仅提取对后续对话有价值的稳定事实（偏好、关系、长期计划、关键事件）。"
+    "必须使用简体中文输出，不要英文，不要拼音，不要解释。"
+)
 
 
 def close_memory() -> None:
@@ -58,18 +68,20 @@ def _get_memory():
     if _MEMORY is not None:
         return _MEMORY
     cfg = get_config()
-    api_key = (cfg.get("GEMINI_API_KEY") or "").strip()
+    api_key = get_gateway_api_key()
+    api_base = get_gateway_api_base()
     if not api_key:
-        logger.warning("未配置 GEMINI_API_KEY，长期记忆 (Mem0) 未启用")
+        logger.warning("未配置 LITELLM_API_KEY，长期记忆 (Mem0) 未启用")
+        return None
+    if not api_base:
+        logger.warning("未配置 OPENAI_BASE_URL，长期记忆 (Mem0) 未启用")
         return None
     try:
         from mem0 import Memory
     except ImportError as e:
         logger.warning("未安装 mem0ai，长期记忆未启用: %s", e)
         return None
-    # 从 config.yaml 读取，无则用默认值
-    embedder_model = cfg.get("mem0_embedder_model") or "gemini-embedding-001"
-    llm_model = cfg.get("mem0_llm_model") or "gemini-2.0-flash"
+    # Mem0 模型与网关参数统一由 llm-gateway 解析
     try:
         embedding_dims = int(cfg.get("mem0_embedding_dims") or 768)
     except (TypeError, ValueError):
@@ -79,35 +91,14 @@ def _get_memory():
     except (TypeError, ValueError):
         llm_temperature = 0.2
     vector_path = cfg.get("mem0_vector_store_path") or str(_mem0_dir / "qdrant")
-    config = {
-        "embedder": {
-            "provider": "gemini",
-            "config": {
-                "model": embedder_model,
-                "api_key": api_key,
-                "embedding_dims": embedding_dims,
-            },
-        },
-        "llm": {
-            "provider": "gemini",
-            "config": {
-                "model": llm_model,
-                "temperature": llm_temperature,
-                "api_key": api_key,
-            },
-        },
-        "vector_store": {
-            "provider": "qdrant",
-            "config": {
-                "path": vector_path,
-                "embedding_model_dims": embedding_dims,
-                "on_disk": True,  # 必须 True：否则 mem0 会在每次初始化时 rmtree(path) 清空已有数据
-            },
-        },
-    }
+    config = build_mem0_openai_config(
+        llm_temperature=llm_temperature,
+        embedding_dims=embedding_dims,
+        vector_path=vector_path,
+    )
     try:
         _MEMORY = Memory.from_config(config)
-        logger.info("Mem0 长期记忆已启用（Gemini embedder + LLM）")
+        logger.info("Mem0 长期记忆已启用（OpenAI-compatible embedder + LLM）")
         return _MEMORY
     except Exception as e:
         logger.warning("Mem0 初始化失败，长期记忆未启用: %s", e)
@@ -132,8 +123,8 @@ async def search(
     def _search() -> List[Dict[str, Any]]:
         result = memory.search(
             query,
-            user_id=uid,
-            limit=limit,
+            top_k=limit,
+            filters={"user_id": uid},
         )
         items = result.get("results") or []
         # 返回完整信息，由调用方决定如何格式化
@@ -191,6 +182,7 @@ async def add_background(
         if infer and (user_input or "").strip():
             # 先尝试只抽取事实；若 LLM 返回非法 JSON（Mem0 会打 Invalid JSON response），降级为存原文
             messages = [
+                {"role": "system", "content": _FACTS_CHINESE_SYSTEM_PROMPT},
                 {"role": "user", "content": (user_input or "").strip()},
                 {"role": "assistant", "content": reply_text.strip()},
             ]

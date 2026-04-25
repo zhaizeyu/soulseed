@@ -1,7 +1,16 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import {
+  useState,
+  useRef,
+  useCallback,
+  useEffect,
+  useMemo,
+  type KeyboardEvent,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Send, Mic, Square } from "lucide-react";
+import type { Message } from "@/hooks/use-chat-history";
 import { useChatHistory } from "@/hooks/use-chat-history";
+import type { StreamingTurn } from "@/hooks/use-chat-stream";
 import { useChatStream } from "@/hooks/use-chat-stream";
 import { parseContentSegments } from "@/lib/format-content";
 import { cn } from "@/lib/utils";
@@ -58,6 +67,29 @@ function AssistantContent({
 }
 
 const ASSISTANT_LABEL = "助手";
+
+/** 历史里已出现与当前流式占位相同的本轮时不再追加（避免 invalidate 与 streamingTurn 不同帧叠成两条） */
+function historyAlreadyHasStreamingTurn(messages: Message[], st: StreamingTurn): boolean {
+  const { userMessage, assistantContent } = st;
+  const streamA = assistantContent ?? "";
+  const n = messages.length;
+  if (userMessage) {
+    if (n < 2) return false;
+    const u = messages[n - 2];
+    const a = messages[n - 1];
+    if (u.role !== "user" || a.role !== "assistant") return false;
+    if (u.content !== userMessage) return false;
+    const histA = a.content ?? "";
+    if (histA === streamA) return true;
+    return histA.trimEnd() === streamA.trimEnd();
+  }
+  if (n < 1) return false;
+  const a = messages[n - 1];
+  if (a.role !== "assistant") return false;
+  const histA = a.content ?? "";
+  if (histA === streamA) return true;
+  return histA.trimEnd() === streamA.trimEnd();
+}
 
 export default function App() {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -137,15 +169,20 @@ export default function App() {
     playSpeechSegments(content);
   }, [streamingTurn, ttsReplyEnabled, playSpeechSegments]);
 
-  const displayMessages = [...messages];
-  if (streamingTurn) {
-    if (streamingTurn.userMessage)
-      displayMessages.push({ role: "user", content: streamingTurn.userMessage });
-    displayMessages.push({
-      role: "assistant",
-      content: streamingTurn.assistantContent,
-    });
-  }
+  const { displayMessages, isAppendingStream } = useMemo(() => {
+    if (!streamingTurn) {
+      return { displayMessages: [...messages], isAppendingStream: false };
+    }
+    if (historyAlreadyHasStreamingTurn(messages, streamingTurn)) {
+      return { displayMessages: [...messages], isAppendingStream: false };
+    }
+    const rows: Message[] = [...messages];
+    if (streamingTurn.userMessage) {
+      rows.push({ role: "user", content: streamingTurn.userMessage });
+    }
+    rows.push({ role: "assistant", content: streamingTurn.assistantContent });
+    return { displayMessages: rows, isAppendingStream: true };
+  }, [messages, streamingTurn]);
 
   const handleSubmit = () => {
     const text = input;
@@ -153,7 +190,7 @@ export default function App() {
     sendMessage(text, messages.length);
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
@@ -248,9 +285,15 @@ export default function App() {
           )}
           <AnimatePresence initial={false}>
             {!loadingHistory &&
-              displayMessages.map((m, i) => (
+              displayMessages.map((m, i) => {
+                const isLiveStreamRow =
+                  isAppendingStream &&
+                  streamingTurn &&
+                  i === displayMessages.length - 1 &&
+                  m.role === "assistant";
+                return (
                 <motion.div
-                  key={i}
+                  key={`${m.role}-${i}-${m.content.length}-${m.content.slice(0, 24)}`}
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.3 }}
@@ -280,22 +323,10 @@ export default function App() {
                         <AssistantContent
                           content={
                             m.content ||
-                            (streamingTurn && i === displayMessages.length - 1
-                              ? "…"
-                              : "")
+                            (isLiveStreamRow ? "…" : "")
                           }
-                          isStreaming={
-                            !!(
-                              streamingTurn &&
-                              i === displayMessages.length - 1
-                            )
-                          }
-                          showCaret={
-                            !!(
-                              streamingTurn &&
-                              i === displayMessages.length - 1
-                            )
-                          }
+                          isStreaming={!!isLiveStreamRow}
+                          showCaret={!!isLiveStreamRow}
                         />
                       </div>
                       <span className="mt-2 text-[10px] text-slate-600 font-medium uppercase tracking-tighter opacity-50">
@@ -304,7 +335,8 @@ export default function App() {
                     </>
                   )}
                 </motion.div>
-              ))}
+              );
+              })}
           </AnimatePresence>
           <div ref={bottomRef} className="h-4" />
         </div>
@@ -338,12 +370,7 @@ export default function App() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSubmit();
-                }
-              }}
+              onKeyDown={handleKeyDown}
               placeholder="输入想发送的消息，或点击麦克风语音输入"
               disabled={loading}
               className="flex-1 bg-transparent border-none focus:ring-0 text-slate-200 py-2 text-sm placeholder-slate-600 focus:outline-none disabled:opacity-60"
